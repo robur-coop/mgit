@@ -1,0 +1,21 @@
+opam-version: "2.0"
+maintainer: "Robur Team <team@robur.coop>"
+authors: [ "Robur Team <team@robur.coop>" ]
+license: "MIT"
+homepage: "https://github.com/robur-coop/mgit"
+dev-repo: "git+https://github.com/robur-coop/mgit"
+bug-reports: "https://github.com/robur-coop/mgit/issues"
+synopsis: "Git for unikernels"
+
+depends: [
+  "ocaml" {>= "4.12.0"}
+  "dune" {>= "3.0.0"}
+  "alcotest" {with-test}
+]
+
+build: [
+  ["dune" "subst"] {dev}
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] 
+]
+x-maintenance-intent: [ "(latest)" ]

@@ -1,0 +1,3 @@
+(library
+ (name mgit)
+ (libraries flux carton fmt ohex))
