@@ -1,0 +1,5 @@
+(library
+ (name mgit_unix)
+ (public_name mgit.unix)
+ (libraries bstr fmt mgit.blk unix)
+ (modules block_unix))
