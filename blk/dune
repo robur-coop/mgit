@@ -1,4 +1,4 @@
 (library
  (name blk)
  (public_name mgit.blk)
- (libraries bstr cachet cachet.wr checkseum.c flux fmt logs mkernel))
+ (libraries bstr cachet cachet.wr checkseum.c flux fmt logs optint))

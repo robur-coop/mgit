@@ -1,4 +1,7 @@
+module Device = Device
 module Append = Append
+
+module type BLOCK = Device.S
 
 (** [Blk] is a module which splits a block device into 3 parts:
     - a temporary part
@@ -10,35 +13,59 @@ module Append = Append
     reached at which the changes to the [Blk] metadata are confirmed (see
     {!val:commit}). *)
 
-type 'metadata t
+type zone =
+  [ `Active
+  | `Inactive
+  | `Temporary ]
 
-val mapper : [ `Active | `Inactive | `Temporary ] -> 'm t Cachet.map
-val append : 'm t -> [ `Active | `Inactive | `Temporary ] -> Append.t
-val writer : 'm t -> [ `Active | `Inactive | `Temporary ] -> 'm t Cachet_wr.t
-val source : 'm t -> [ `Active | `Inactive | `Temporary ] -> Bstr.t Flux.source
-val sink : 'm t -> [ `Active | `Inactive | `Temporary ] -> (string, unit) Flux.sink
+module Make (Block : BLOCK) : sig
+  module Append : module type of Append.Make (Block)
 
-val metadata : 'm t -> 'm
-val with_metadata : 'm t -> 'm -> 'm t
+  type 'metadata t
 
-val sync : 'm t -> 'm t
-(** [sync t] upgrades the current active zone and atomically save it into the
-    block device. *)
+  val mapper : zone -> 'm t Cachet.map
+  val append : 'm t -> zone -> Append.t
+  val writer : 'm t -> zone -> 'm t Cachet_wr.t
+  val sink : 'm t -> zone -> (string, unit) Flux.sink
 
-val commit : 'm t -> 'm t
-(** [commit t] sets the current active zone (the inactive zone becomes active
-    and vice-versa) and atomically save it into the block device. *)
+  val bounds : 'm t -> zone -> int * int
+  (** [bounds t which] is the absolute offset and the length (in bytes) of the
+      requested zone on the block-device. *)
 
-val format :
-     ?ratio:float
-  -> rd:(Bstr.t -> ('m, [ `Invalid_metadata ]) result)
-  -> wr:('m -> Bstr.t -> int)
-  -> ?length:int
-  -> Mkernel.Block.t
-  -> ('m t, [> `Invalid_metadata | `Msg of string ]) result
+  val cachet : 'm t -> zone -> base:int -> len:int -> 'm t Cachet.t
+  (** [cachet t which ~base ~len] is a {!Cachet.t} whose logical address [0]
+      is the byte [base] of the zone [which] and which never reads further than
+      [base + len]. Out of bounds reads return an empty bigstring, as
+      {!type:Cachet.map} requires. *)
 
-val make :
-     wr:('m -> Bstr.t -> int)
-  -> rd:(Bstr.t -> ('m, [ `Invalid_metadata ]) result)
-  -> Mkernel.Block.t
-  -> ('m t, [> `Msg of string ]) result
+  val seq : 'm t -> zone -> ?off:int -> ?len:int -> unit -> string Seq.t
+  (** [seq t which ~off ~len ()] streams [len] bytes of the zone [which],
+      starting at the byte [off] of that zone. *)
+
+  val source : 'm t -> zone -> ?off:int -> ?len:int -> unit -> string Flux.source
+
+  val metadata : 'm t -> 'm
+  val with_metadata : 'm t -> 'm -> 'm t
+
+  val sync : 'm t -> 'm t
+  (** [sync t] upgrades the current active zone and atomically save it into the
+      block device. *)
+
+  val commit : 'm t -> 'm t
+  (** [commit t] sets the current active zone (the inactive zone becomes active
+      and vice-versa) and atomically save it into the block device. *)
+
+  val format :
+       ?ratio:float
+    -> rd:(Bstr.t -> ('m, [ `Invalid_metadata ]) result)
+    -> wr:('m -> Bstr.t -> int)
+    -> ?length:int
+    -> Block.t
+    -> ('m t, [> `Invalid_metadata | `Msg of string ]) result
+
+  val make :
+       wr:('m -> Bstr.t -> int)
+    -> rd:(Bstr.t -> ('m, [ `Invalid_metadata ]) result)
+    -> Block.t
+    -> ('m t, [> `Msg of string ]) result
+end
