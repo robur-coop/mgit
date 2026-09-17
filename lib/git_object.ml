@@ -206,19 +206,6 @@ end
 
 (* Headers, kind of similar to RFC 822 *)
 
-let split_headers str =
-  let rec eol pos =
-    match String.index_from_opt str pos '\n' with
-    | None -> (String.length str, None)
-    | Some eol when eol + 1 < String.length str && str.[eol + 1] = '\n' ->
-        (eol, Some (eol + 2))
-    | Some eol when eol + 1 = String.length str -> (eol, None)
-    | Some eol -> next (eol + 1) in
-  and_then eol 0
-
-and and_then fn pos = fn pos
-and next pos = pos |> fun pos -> (pos, None)
-
 let headers_of_string str =
   let hdrs, message =
     let rec go pos =

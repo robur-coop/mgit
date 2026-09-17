@@ -1,3 +1,4 @@
 (library
  (name mgit)
- (libraries flux carton fmt ohex))
+ (public_name mgit)
+ (libraries carton digestif flux fmt logs ohex))
