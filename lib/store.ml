@@ -146,12 +146,6 @@ module Make (Block : Blk.BLOCK) = struct
     | Some carton, Some cursor -> Some (Carton.kind_of_offset carton ~cursor)
     | _ -> None
 
-  let length t uid =
-    match (t.carton, cursor t uid) with
-    | Some carton, Some cursor ->
-        Some (Carton.actual_size_of_offset carton ~cursor :> int)
-    | _ -> None
-
   let value t uid =
     match (t.carton, cursor t uid) with
     | Some carton, Some cursor ->
@@ -159,6 +153,8 @@ module Make (Block : Blk.BLOCK) = struct
         let blob = Carton.Blob.make ~size in
         Some (Carton.of_offset carton blob ~cursor)
     | _ -> None
+
+  let length t uid = Option.map Carton.Value.length (value t uid)
 
   let read t uid =
     let fn value =
