@@ -99,6 +99,11 @@ let advertisement_v1 first ctx =
       Protocol.return
         (V1 { refs = { refs; peeled; head; head_symref }; capabilities })
 
+(* NOTE(dinosaure): for [git-daemon] *)
+let proto_request ?(version = 2) ~service ~host path ctx =
+  let extra = if version >= 2 then Fmt.str "\000version=%d\000" version else "" in
+  Protocol.encode_pkt ctx "%s %s\000host=%s\000%s" service path host extra
+
 let advertisement ctx =
   let rec version ctx =
     let* pkt = Protocol.decode_pkt ctx in
