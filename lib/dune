@@ -1,4 +1,16 @@
 (library
  (name mgit)
  (public_name mgit)
- (libraries carton digestif flux fmt logs ohex))
+ (libraries
+  bstr
+  carton
+  carton.cartonnage
+  carton.classeur
+  checkseum
+  decompress.de
+  digestif
+  flux
+  fmt
+  logs
+  ohex
+  optint))
