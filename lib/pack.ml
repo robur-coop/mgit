@@ -15,16 +15,16 @@ let buffers () =
   and w = De.Lz77.make_window ~bits:15 in
   { Cartonnage.o; i; q; w }
 
-let emit ?level ~push:out ~load ~number_of_objects targets =
+let to_seq ?level ?(on_entry = fun ~uid:_ ~offset:_ ~crc:_ -> ()) ~load
+    ~number_of_objects targets =
   let buffers = buffers () in
+  let o = buffers.Cartonnage.o in
   let ctx = ref SHA1.empty in
-  let push str = ctx := SHA1.feed_string !ctx str; out str in
+  let chunk str = ctx := SHA1.feed_string !ctx str; str in
   let emitted = Hashtbl.create 0x100 in
   let where uid = Hashtbl.find_opt emitted uid in
-  let entries = ref [] in
-  push ("PACK" ^ be32 2 ^ be32 number_of_objects);
   let cursor = ref 12 in
-  let fn target =
+  let entry target () =
     let uid = Cartonnage.Target.uid target
     and meta = Cartonnage.Target.meta target in
     let value = load uid meta in
@@ -33,34 +33,44 @@ let emit ?level ~push:out ~load ~number_of_objects targets =
     let _hdr_len, encoder =
       Cartonnage.encode ?level ~buffers ~where target ~target:value
         ~cursor:offset in
-    let rec go encoder =
-      match Cartonnage.Encoder.encode ~o:buffers.Cartonnage.o encoder with
+    let rec go encoder () =
+      match Cartonnage.Encoder.encode ~o encoder with
       | `Flush (encoder, len) ->
-          crc := Checkseum.Crc32.digest_bigstring buffers.Cartonnage.o 0 len !crc;
-          push (Bstr.sub_string buffers.Cartonnage.o ~off:0 ~len);
+          crc := Checkseum.Crc32.digest_bigstring o 0 len !crc;
+          let str = chunk (Bstr.sub_string o ~off:0 ~len) in
           cursor := !cursor + len;
-          let encoder =
-            Cartonnage.Encoder.dst encoder buffers.Cartonnage.o 0
-              (Bstr.length buffers.Cartonnage.o) in
-          go encoder
-      | `End -> () in
-    go encoder;
-    Log.debug (fun m ->
-        m "%a emitted at %08x (%d byte(s))" Carton.Uid.pp uid offset
-          (!cursor - offset));
-    Hashtbl.replace emitted uid offset;
-    let uid = Classeur.unsafe_uid_of_string (uid :> string) in
-    let entry =
-      { Classeur.Encoder.crc= !crc; offset= Int64.of_int offset; uid } in
+          let encoder = Cartonnage.Encoder.dst encoder o 0 (Bstr.length o) in
+          Seq.Cons (str, go encoder)
+      | `End ->
+          Log.debug (fun m ->
+              m "%a emitted at %08x (%d byte(s))" Carton.Uid.pp uid offset
+                (!cursor - offset));
+          Hashtbl.replace emitted uid offset;
+          on_entry ~uid ~offset ~crc:!crc;
+          Seq.Nil in
+    go encoder () in
+  let header () =
+    Seq.Cons (chunk ("PACK" ^ be32 2 ^ be32 number_of_objects), Seq.empty) in
+  let signature () =
+    Seq.Cons (SHA1.to_raw_string (SHA1.get !ctx), Seq.empty) in
+  Seq.append header
+    (Seq.append (Seq.flat_map (fun target -> entry target) targets) signature)
+
+let emit ?level ~push ~load ~number_of_objects targets =
+  let entries = ref [] in
+  let on_entry ~uid ~offset ~crc =
+    let uid = Classeur.unsafe_uid_of_string (uid : Carton.Uid.t :> string) in
+    let entry = { Classeur.Encoder.crc; offset= Int64.of_int offset; uid } in
     entries := entry :: !entries in
-  Seq.iter fn targets;
-  let hash = SHA1.to_raw_string (SHA1.get !ctx) in
-  out hash;
-  let entries = Array.of_list (List.rev !entries) in
+  let hash = ref "" in
+  let seq = to_seq ?level ~on_entry ~load ~number_of_objects targets in
+  (* the last element is the signature *)
+  Seq.iter (fun str -> hash := str; push str) seq;
+  let entries = Array.of_list !entries in
   let compare { Classeur.Encoder.uid= a; _ } { Classeur.Encoder.uid= b; _ } =
     String.compare (a :> string) (b :> string) in
   Array.sort compare entries;
-  (entries, hash)
+  (entries, !hash)
 
 let digest () =
   let feed_bytes buf ~off ~len ctx = SHA1.feed_bytes ctx ~off ~len buf in

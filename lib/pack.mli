@@ -1,3 +1,11 @@
+val to_seq :
+     ?level:int
+  -> ?on_entry:(uid:Carton.Uid.t -> offset:int -> crc:Optint.t -> unit)
+  -> load:(Carton.Uid.t -> 'meta -> Carton.Value.t)
+  -> number_of_objects:int
+  -> 'meta Cartonnage.Target.t Seq.t
+  -> string Seq.t
+
 val emit :
      ?level:int
   -> push:(string -> unit)
