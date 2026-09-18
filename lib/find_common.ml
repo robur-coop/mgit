@@ -124,8 +124,8 @@ let find_common ~stateless ~multi_ack ~no_done ~caps ~negotiator ~shallows
 
 let has cap capabilities = List.mem cap capabilities
 
-let fetch_v1 ?(stateless = false) ~capabilities ~negotiator ~shallows ?deepen
-    wants q ctx =
+let fetch_v1 ?(stateless = false) ?(thin = false) ~capabilities ~negotiator
+    ~shallows ?deepen wants q ctx =
   let side_band =
     if has "side-band-64k" capabilities then Some "side-band-64k"
     else if has "side-band" capabilities then Some "side-band"
@@ -149,6 +149,7 @@ let fetch_v1 ?(stateless = false) ~capabilities ~negotiator ~shallows ?deepen
            | `None -> [])
           @ (if no_done then [ "no-done" ] else [])
           @ [ side_band ]
+          @ (if thin && has "thin-pack" capabilities then [ "thin-pack" ] else [])
           @ List.filter (fun cap -> has cap capabilities) [ "no-progress"; "ofs-delta" ]
         in
         let* result, updates =
@@ -171,11 +172,12 @@ let feature ~command name capabilities =
        List.mem name (String.split_on_char ' ' values) in
   List.exists fn capabilities
 
-let send_fetch_request ~negotiator ~shallows ?deepen ~wants ~common
+let send_fetch_request ~thin ~negotiator ~shallows ?deepen ~wants ~common
     ~haves_to_send ~in_vain ~seen_ack ctx =
   let* () = Protocol.encode_pkt ctx "command=fetch" in
   let* () = Protocol.encode_pkt ctx "object-format=sha1" in
   let* () = Protocol.encode_delim_pkt ctx in
+  let* () = if thin then Protocol.encode_pkt ctx "thin-pack" else return () in
   let* () = Protocol.encode_pkt ctx "no-progress" in
   let* () = Protocol.encode_pkt ctx "ofs-delta" in
   let* () = Smart.iter (fun uid -> Protocol.encode_pkt ctx "shallow %s" (hex uid)) shallows in
@@ -270,7 +272,8 @@ let rec sections updates ctx =
       end
   | `Flush | `Delim | `End -> sections updates ctx
 
-let fetch_v2 ~capabilities ~negotiator ~shallows ?deepen wants q ctx =
+let fetch_v2 ?(thin = false) ~capabilities ~negotiator ~shallows ?deepen wants
+    q ctx =
   if (shallows <> [] || deepen <> None)
      && not (feature ~command:"fetch" "shallow" capabilities)
   then Protocol.error (`Err "the remote does not support shallow requests")
@@ -279,7 +282,7 @@ let fetch_v2 ~capabilities ~negotiator ~shallows ?deepen wants q ctx =
     let haves_to_send = ref initial_flush and in_vain = ref 0 in
     let rec send_request ~common ~seen_ack =
       let* done_sent =
-        send_fetch_request ~negotiator ~shallows ?deepen ~wants ~common
+        send_fetch_request ~thin ~negotiator ~shallows ?deepen ~wants ~common
           ~haves_to_send ~in_vain ~seen_ack ctx in
       if done_sent then get_pack ()
       else
