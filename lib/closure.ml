@@ -46,7 +46,10 @@ let objects ~read commits =
         | Some (`B, payload) ->
             trees := uid :: !trees;
             begin match Git_object.Tree.of_string payload with
-            | Ok tree -> go (rest @ Git_object.Tree.uids tree)
+            | Ok tree ->
+                let fn { Git_object.Tree.perm; node; _ } =
+                  if perm = `Commit then None else Some node in
+                go (rest @ List.filter_map fn (Git_object.Tree.to_list tree))
             | Error (`Msg _) -> raise (Missing uid)
             end
         | Some ((`A | `D), _) -> raise (Not_a_commit uid)
