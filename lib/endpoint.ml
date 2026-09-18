@@ -104,6 +104,13 @@ let of_string str =
   else if String.contains str ':' then of_scp str branch
   else error_msgf "Invalid endpoint: %S" str
 
+let uri t =
+  let user = match t.user with Some user -> user ^ "@" | None -> "" in
+  let host = if String.contains t.host ':' then "[" ^ t.host ^ "]" else t.host in
+  let port = match t.port with Some port -> ":" ^ string_of_int port | None -> "" in
+  let path = if String.length t.path > 0 && t.path.[0] = '/' then t.path else "/" ^ t.path in
+  Fmt.str "%s://%s%s%s%s" (string_of_scheme t.scheme) user host port path
+
 let to_string t =
   let user = match t.user with Some user -> user ^ "@" | None -> "" in
   let host = if String.contains t.host ':' then "[" ^ t.host ^ "]" else t.host in

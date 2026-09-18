@@ -14,5 +14,6 @@ type t =
 
 val of_string : string -> (t, [> `Msg of string ]) result
 val to_string : t -> string
+val uri : t -> string
 val port : t -> int
 val pp : t Fmt.t
