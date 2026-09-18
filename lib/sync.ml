@@ -131,7 +131,7 @@ module Make (Flow : Git_flow.S) = struct
         | _ -> error_msgf "%s does not exist on the remote" (store.branch t)
         end
 
-  let receive t store ?deepen flow ctx advertisement refs want into =
+  let receive t store ?deepen ~stateless flow ctx advertisement refs want into =
      let q = Flux.Bqueue.(create with_close) 0x100 in
      let received = ref 0 in
      let consumer =
@@ -149,8 +149,8 @@ module Make (Flow : Git_flow.S) = struct
            Find_common.fetch_v2 ~thin:true ~capabilities ~negotiator ~shallows
              ?deepen [ want ] q ctx
        | Smart.V1 { capabilities; _ } ->
-           Find_common.fetch_v1 ~thin:true ~capabilities ~negotiator ~shallows
-             ?deepen [ want ] q ctx in
+           Find_common.fetch_v1 ~stateless ~thin:true ~capabilities ~negotiator
+             ~shallows ?deepen [ want ] q ctx in
      let result = Run.run flow (reword fetch) in
      Flux.Bqueue.close q;
      Miou.await_exn consumer;
@@ -221,29 +221,46 @@ module Make (Flow : Git_flow.S) = struct
         len:int -> extern:(uid -> (Carton.Kind.t * Bstr.t) option) -> 'tmp Carton.t
     ; into : (string, unit) Flux.sink }
 
+  let is_stateless edn =
+    match edn.Endpoint.scheme with `HTTP | `HTTPS -> true | `Git | `SSH -> false
+
+  let connect remote_ctx edn ~service ~version =
+    let* flow = Flow.connect remote_ctx edn ~service ~version in
+    let ctx = Protocol.ctx () in
+    match edn.Endpoint.scheme with
+    | `SSH | `HTTP | `HTTPS -> Ok (flow, ctx)
+    | `Git ->
+        let host = edn.Endpoint.host and path = edn.Endpoint.path in
+        let request = Smart.proto_request ~version ~service ~host path ctx in
+        begin match Run.run flow (reword request) with
+        | Ok () -> Ok (flow, ctx)
+        | Error _ as err -> Flow.close flow; err
+        end
+
   let pull t store ~generation ?deepen tmp = function
     | None -> error_msgf "No remote configured"
     | Some { ctx= remote_ctx; edn; version } ->
-        let* flow = Flow.connect remote_ctx edn in
-        let finally () = Flow.close flow in
-        Fun.protect ~finally @@ fun () ->
-        let ctx = Protocol.ctx () in
-        let host = edn.Endpoint.host and path = edn.Endpoint.path in
-        let request =
-          let version = match version with `V1 -> 1 | `V2 -> 2 in
-          Smart.proto_request ~version ~service:"git-upload-pack" ~host path ctx in
-        let* () = Run.run flow (reword request) in
+        let version = match version with `V1 -> 1 | `V2 -> 2 in
+        let* flow, ctx = connect remote_ctx edn ~service:"git-upload-pack" ~version in
+        Fun.protect ~finally:(fun () -> Flow.close flow) @@ fun () ->
         let* advertisement = Run.run flow (reword (Smart.advertisement ctx)) in
         let* refs =
           match advertisement with
           | Smart.V1 { refs; _ } -> Ok refs
           | Smart.V2 _ -> Run.run flow (reword (Smart.ls_refs ctx)) in
         let* name, want = want t store refs in
-        if Some want = store.head t then Ok []
+        if Some want = store.head t then begin
+          if not (is_stateless edn)
+          then ignore (Run.run flow (reword (Protocol.encode_flush_pkt ctx)));
+          Ok []
+        end
         else begin
           let before = paths t store in
           (* NOTE(dinosaure): download the PACK file into [tmp]. *)
-          let* len = receive t store ?deepen flow ctx advertisement refs want tmp.into in
+          let stateless = is_stateless edn in
+          let* len =
+            receive t store ?deepen ~stateless flow ctx advertisement refs want
+              tmp.into in
           if len = 0 then Ok []
           else begin
             (* NOTE(dinosaure): analyze the PACK file. *)
@@ -274,15 +291,8 @@ module Make (Flow : Git_flow.S) = struct
         begin match store.head t with
         | None -> Ok ()
         | Some new_uid ->
-            let* flow = Flow.connect remote_ctx edn in
-            let finally () = Flow.close flow in
-            Fun.protect ~finally @@ fun () ->
-            let ctx = Protocol.ctx () in
-            let host = edn.Endpoint.host and path = edn.Endpoint.path in
-            let request =
-              Smart.proto_request ~version:1 ~service:"git-receive-pack" ~host
-                path ctx in
-            let* () = Run.run flow (reword request) in
+            let* flow, ctx = connect remote_ctx edn ~service:"git-receive-pack" ~version:1 in
+            Fun.protect ~finally:(fun () -> Flow.close flow) @@ fun () ->
             let* advertisement = Run.run flow (reword (Smart.advertisement ctx)) in
             begin match advertisement with
             | Smart.V2 _ -> error_msgf "Unexpected protocol v2 from git-receive-pack"
@@ -310,19 +320,28 @@ module Make (Flow : Git_flow.S) = struct
                       (fun cap -> List.mem cap capabilities)
                       [ "report-status"; "ofs-delta" ] in
                   let commands = [ { Smart.old_uid; new_uid; name } ] in
-                  let* () =
-                    Run.run flow
-                      (reword (Smart.send_commands ~capabilities commands ctx)) in
-                  let* () = Run.run flow (reword (Smart.send_seq seq ctx)) in
-                  if not (List.mem "report-status" capabilities) then Ok ()
-                  else
-                    let* report = Run.run flow (reword (Smart.report_status ctx)) in
-                    match (report.Smart.unpack, List.assoc_opt name report.statuses) with
-                    | Error reason, _ ->
-                        error_msgf "The remote refused our PACK file: %s" reason
-                    | Ok (), Some (Error reason) ->
-                        error_msgf "The remote refused to update %s: %s" name reason
-                    | Ok (), (Some (Ok ()) | None) -> Ok ()
+                  let exchange =
+                    let ( let* ) = Protocol.bind in
+                    let* () = Smart.send_commands ~capabilities commands ctx in
+                    let* () = Smart.send_seq seq ctx in
+                    if List.mem "report-status" capabilities
+                    then
+                      let* report = Smart.report_status ctx in
+                      Protocol.return (Some report)
+                    else Protocol.return None in
+                  let* report = Run.run flow (reword exchange) in
+                  match report with
+                  | None -> Ok ()
+                  | Some report ->
+                      begin match
+                        (report.Smart.unpack, List.assoc_opt name report.statuses)
+                      with
+                      | Error reason, _ ->
+                          error_msgf "The remote refused our PACK file: %s" reason
+                      | Ok (), Some (Error reason) ->
+                          error_msgf "The remote refused to update %s: %s" name reason
+                      | Ok (), (Some (Ok ()) | None) -> Ok ()
+                      end
             end
         end
 end
