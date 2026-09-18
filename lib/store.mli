@@ -11,9 +11,6 @@ module Make (Block : Blk.BLOCK) : sig
 
   val format : ?ratio:float -> ?length:int -> Block.t -> (unit, [> error ]) result
   val load : Block.t -> (t, [> error ]) result
-
-  (** {2 Reading the active zone.} *)
-
   val references : t -> (string * Carton.Uid.t) list
   val prerequisites : t -> (Carton.Uid.t * string option) list
   val reference : t -> string -> Carton.Uid.t option
@@ -37,8 +34,10 @@ module Make (Block : Blk.BLOCK) : sig
   val to_bundle : t -> string Seq.t
 
   module Tmp : sig
+    type extern = Carton.Uid.t -> (Carton.Kind.t * Bstr.t) option
+
     val sink : t -> (string, unit) Flux.sink
     val seq : t -> len:int -> string Seq.t
-    val carton : t -> len:int -> fd Carton.t
+    val carton : ?extern:extern -> t -> len:int -> fd Carton.t
   end
 end

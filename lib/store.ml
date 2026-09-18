@@ -211,13 +211,18 @@ module Make (Block : Blk.BLOCK) = struct
         (Blk.seq t.blk `Active ~off:m.pack_off ~len:m.pack_len ())
 
   module Tmp = struct
+    type extern = Carton.Uid.t -> (Carton.Kind.t * Bstr.t) option
+
     let sink t = Blk.sink t.blk `Temporary
     let seq t ~len = Blk.seq t.blk `Temporary ~off:0 ~len ()
 
-    let carton t ~len =
+    let carton ?(extern = Fun.const None) t ~len =
       let cache = Blk.cachet t.blk `Temporary ~base:0 ~len in
       let z = Bstr.create 0x1000 in
-      let index (_ : Carton.Uid.t) = raise Not_found in
+      let index (uid : Carton.Uid.t) =
+        match extern uid with
+        | Some (kind, bstr) -> Carton.Extern (kind, bstr)
+        | None -> raise Not_found in
       Carton.of_cache cache ~z ~allocate ~ref_length index
   end
 end
