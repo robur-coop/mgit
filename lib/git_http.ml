@@ -15,6 +15,8 @@ let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let inhibit fn = try fn () with _exn -> ()
 
 module Make (Client : CLIENT) = struct
+  type ctx = Client.ctx
+
   type request =
     { body : (string, string option) Flux.Bqueue.t option
     ; response : (string, string option) Flux.Bqueue.t

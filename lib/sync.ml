@@ -22,7 +22,7 @@ type 't store =
 module Make (Flow : Git_flow.S) = struct
   module Run = Git_flow.Make (Flow)
 
-  type remote = { ctx : Flow.ctx; edn : Endpoint.t; version : [ `V1 | `V2 ] }
+  type remote = { ctx : Flow.ctx; edn : Endpoint.t }
 
   let reword t = Protocol.reword_error (fun err -> `Msg (Fmt.str "%a" Smart.pp_error err)) t
 
@@ -239,9 +239,8 @@ module Make (Flow : Git_flow.S) = struct
 
   let pull t store ~generation ?deepen tmp = function
     | None -> error_msgf "No remote configured"
-    | Some { ctx= remote_ctx; edn; version } ->
-        let version = match version with `V1 -> 1 | `V2 -> 2 in
-        let* flow, ctx = connect remote_ctx edn ~service:"git-upload-pack" ~version in
+    | Some { ctx= remote_ctx; edn } ->
+        let* flow, ctx = connect remote_ctx edn ~service:"git-upload-pack" ~version:2 in
         Fun.protect ~finally:(fun () -> Flow.close flow) @@ fun () ->
         let* advertisement = Run.run flow (reword (Smart.advertisement ctx)) in
         let* refs =
