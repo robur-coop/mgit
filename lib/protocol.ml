@@ -333,8 +333,14 @@ let decode_line ctx =
     | Decoder.Error { error; _ } -> Error error in
   go (k ctx.decoder)
 
+let rec skip_response_end (t : Decoder.t) =
+  if t.max - t.pos >= 4 && Bytes.sub_string t.buffer t.pos 4 = "0002"
+  then (Decoder.skip t 4; skip_response_end t)
+
+let at_least_one_pkt t = skip_response_end t; Decoder.at_least_one_pkt t
+
 let decode_pkt ctx =
-  let at_least = Decoder.at_least_one_pkt in
+  let at_least = at_least_one_pkt in
   let k t =
     let buf, off, len = Decoder.peek_pkt t in
     let str = Bytes.sub_string buf off len in
@@ -350,7 +356,7 @@ let decode_pkt ctx =
   go (k ctx.decoder)
 
 let decode_pkt_or_delim_or_end ctx =
-  let at_least = Decoder.at_least_one_pkt in
+  let at_least = at_least_one_pkt in
   let k (t : Decoder.t) =
     let hdr = Bytes.sub_string t.buffer t.pos 4 in
     match hdr with
