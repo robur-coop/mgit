@@ -24,7 +24,7 @@ type refs = {
   refs : (string * string) list (* refname, oid (hex) *);
   peeled : (string * string) list;
       (* refname, oid (hex) of the object an annotated tag points at *)
-  head : Carton.Uid.t; (* oid (hex) *)
+  head : Carton.Uid.t option; (* [None] for an empty repository *)
   head_symref : string option (* refs/heads/main *);
 }
 
@@ -47,13 +47,9 @@ let uid_of_hex hex = Carton.Uid.unsafe_of_string (Ohex.decode hex)
 
 let head_of_refs refs head_symref =
   match (List.assoc_opt "HEAD" refs, head_symref) with
-  | Some head, _ when head <> "unborn" -> Protocol.return (uid_of_hex head)
-  | _, Some symref ->
-      begin match List.assoc_opt symref refs with
-      | Some head -> Protocol.return (uid_of_hex head)
-      | None -> Protocol.error `No_branch
-      end
-  | _ -> Protocol.error `No_branch
+  | Some head, _ when head <> "unborn" -> Some (uid_of_hex head)
+  | _, Some symref -> Option.map uid_of_hex (List.assoc_opt symref refs)
+  | _ -> None
 
 let ref_of_line line =
   match String.split_on_char ' ' (String.trim line) with
@@ -95,7 +91,7 @@ let advertisement_v1 first ctx =
         else ((name, oid) :: refs, peeled) in
       let refs, peeled = List.fold_left fn ([], []) advertised in
       let refs = List.rev refs and peeled = List.rev peeled in
-      let* head = head_of_refs refs head_symref in
+      let head = head_of_refs refs head_symref in
       Protocol.return
         (V1 { refs = { refs; peeled; head; head_symref }; capabilities })
 
@@ -162,7 +158,7 @@ let ls_refs ctx =
         | _ -> Protocol.error `Invalid_pkt_line
         end in
   let* refs, peeled, head_symref = go [] [] None ctx in
-  let* head = head_of_refs refs head_symref in
+  let head = head_of_refs refs head_symref in
   Protocol.return { refs; peeled; head; head_symref }
 
 let rec side_band errored q ctx =
@@ -260,3 +256,59 @@ let get_ack ctx =
         | None ->
             Log.err (fun m -> m "Expected ACK/NAK, got %S" line);
             Protocol.error `Invalid_pkt_line
+
+type command =
+  { old_uid : Carton.Uid.t option
+  ; new_uid : Carton.Uid.t
+  ; name : string }
+
+let zero_id = String.make 40 '0'
+
+let send_commands ~capabilities commands ctx =
+  let old = function Some uid -> hex uid | None -> zero_id in
+  let rec go first = function
+    | [] -> Protocol.encode_flush_pkt ctx
+    | { old_uid; new_uid; name } :: rest ->
+        let* () =
+          if first
+          then
+            Protocol.encode_pkt ctx "%s %s %s\000%s" (old old_uid) (hex new_uid)
+              name (String.concat " " capabilities)
+          else Protocol.encode_pkt ctx "%s %s %s" (old old_uid) (hex new_uid) name in
+        go false rest in
+  go true commands
+
+let rec send_seq seq ctx =
+  match seq () with
+  | Seq.Nil -> Protocol.return ()
+  | Seq.Cons (str, rest) ->
+      let* () = Protocol.encode_str ctx str in
+      send_seq rest ctx
+
+type report =
+  { unpack : (unit, string) result
+  ; statuses : (string * (unit, string) result) list }
+
+let report_status ctx =
+  let* unpack =
+    let* pkt = Protocol.decode_pkt ctx in
+    let line = String.trim pkt in
+    if line = "unpack ok" then Protocol.return (Ok ())
+    else if String.starts_with ~prefix:"unpack " line
+    then Protocol.return (Error (String.sub line 7 (String.length line - 7)))
+    else
+      match err_of_pkt line with
+      | Some msg -> Protocol.error (`Err msg)
+      | None -> Protocol.error `Invalid_pkt_line in
+  let rec go acc =
+    let* pkt = Protocol.decode_pkt ctx in
+    match String.trim pkt with
+    | "" -> Protocol.return (List.rev acc)
+    | line ->
+        begin match String.split_on_char ' ' line with
+        | "ok" :: name :: _ -> go ((name, Ok ()) :: acc)
+        | "ng" :: name :: reason -> go ((name, Error (String.concat " " reason)) :: acc)
+        | _ -> Protocol.error `Invalid_pkt_line
+        end in
+  let* statuses = go [] in
+  Protocol.return { unpack; statuses }
