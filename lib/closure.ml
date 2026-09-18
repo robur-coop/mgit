@@ -74,3 +74,26 @@ let closure ~read ~depth root =
       error_msgf "%a is unavailable" Git_object.pp_uid uid
   | exception Not_a_commit uid ->
       error_msgf "%a is not the expected kind of object" Git_object.pp_uid uid
+
+let uncommon ~read ~exclude root =
+  match
+    let everything uid =
+      let kept, _ = commits ~read ~depth:max_int uid in
+      let trees, blobs = objects ~read kept in
+      kept @ trees @ blobs in
+    let known = Hashtbl.create 0x100 in
+    let fn uid =
+      if Option.is_some (read uid)
+      then
+        List.iter
+          (fun uid -> Hashtbl.replace known (uid : Carton.Uid.t :> string) ())
+          (everything uid) in
+    List.iter fn exclude;
+    let unknown uid = not (Hashtbl.mem known (uid : Carton.Uid.t :> string)) in
+    List.filter unknown (everything root)
+  with
+  | value -> Ok value
+  | exception Missing uid ->
+      error_msgf "%a is unavailable" Git_object.pp_uid uid
+  | exception Not_a_commit uid ->
+      error_msgf "%a is not the expected kind of object" Git_object.pp_uid uid
