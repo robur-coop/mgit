@@ -1,13 +1,17 @@
+type data = [ `End | `Len of int ]
+
 module type S = sig
-  type t
   type ctx
+  type t
 
-  val connect : ctx -> Endpoint.t -> (t, [> `Msg of string ]) result
+  val connect :
+       ctx
+    -> Endpoint.t
+    -> service:string
+    -> version:int
+    -> (t, [> `Msg of string ]) result
 
-  val recv :
-    t -> bytes -> off:int -> len:int
-    -> ([ `End | `Len of int ], [> `Msg of string ]) result
-
+  val recv : t -> bytes -> off:int -> len:int -> (data, [> `Msg of string ]) result
   val send : t -> string -> off:int -> len:int -> (int, [> `Msg of string ]) result
   val close : t -> unit
 end
