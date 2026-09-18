@@ -92,5 +92,9 @@ val encode_delim_pkt : ctx -> (unit, [> Encoder.error ]) t
 
 (**/*)
 
+type pkt =
+  [ `Flush | `Delim | `End | `Line of string ]
+
 val decode_line : ctx -> (string, [> Decoder.error ]) t
 val decode_pkt : ctx -> (string, [> Decoder.error ]) t
+val decode_pkt_or_delim_or_end : ctx -> (pkt, [> Decoder.error ]) t

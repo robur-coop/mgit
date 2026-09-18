@@ -314,6 +314,9 @@ type ('r, 'err) fmt =
 
 let encode_pkt ctx fmt = Fmt.kstr (encode_pkt ctx) fmt
 
+type pkt =
+  [ `Flush | `Delim | `End | `Line of string ]
+
 let decode_line ctx =
   let at_least = Decoder.at_least_one_line in
   let k t =
@@ -337,6 +340,28 @@ let decode_pkt ctx =
     let str = Bytes.sub_string buf off len in
     Decoder.skip t (4 + len) ;
     Decoder.Done str in
+  let k t =
+    if at_least t then Decoder.safe k t else Decoder.prompt ~at_least k t in
+  let rec go = function
+    | Decoder.Done v -> Return v
+    | Decoder.Read { buffer; off; len; continue } ->
+        Read { k = Fun.compose go continue; buffer; off; len }
+    | Decoder.Error { error; _ } -> Error error in
+  go (k ctx.decoder)
+
+let decode_pkt_or_delim_or_end ctx =
+  let at_least = Decoder.at_least_one_pkt in
+  let k (t : Decoder.t) =
+    let hdr = Bytes.sub_string t.buffer t.pos 4 in
+    match hdr with
+    | "0000" -> Decoder.skip t 4; Decoder.Done `Flush
+    | "0001" -> Decoder.skip t 4; Decoder.Done `Delim
+    | "0002" -> Decoder.skip t 4; Decoder.Done `End
+    | _ ->
+        let buf, off, len = Decoder.peek_pkt t in
+        let str = Bytes.sub_string buf off len in
+        Decoder.skip t (4 + len) ;
+        Decoder.Done (`Line str) in
   let k t =
     if at_least t then Decoder.safe k t else Decoder.prompt ~at_least k t in
   let rec go = function

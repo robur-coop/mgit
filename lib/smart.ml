@@ -180,55 +180,83 @@ let rec side_band errored q ctx =
         side_band true q ctx
     | _ -> side_band errored q ctx
 
-let fetch_v2 ~(want : Carton.Uid.t) q ctx =
-  let* () = Protocol.encode_pkt ctx "command=fetch" in
-  let* () = Protocol.encode_pkt ctx "object-format=sha1" in
-  let* () = Protocol.encode_delim_pkt ctx in
-  let* () = Protocol.encode_pkt ctx "ofs-delta" in
-  let* () = Protocol.encode_pkt ctx "no-progress" in
-  let* () = Protocol.encode_pkt ctx "want %s" (Ohex.encode (want :> string)) in
-  let* () = Protocol.encode_pkt ctx "done" in
-  let* () = Protocol.encode_flush_pkt ctx in
-  let* () =
-    let* pkt = Protocol.decode_pkt ctx in
-    match String.trim pkt with
-    | "packfile" -> Protocol.return ()
-    | pkt ->
-        Log.err (fun m -> m "Unexpected section: %S" pkt) ;
-        Protocol.error `Invalid_pkt_line in
-  side_band false q ctx
+let rec iter fn = function
+  | [] -> Protocol.return ()
+  | x :: rest -> let* () = fn x in iter fn rest
 
-let capabilities_v1 capabilities =
-  let side_band =
-    if List.mem "side-band-64k" capabilities
-    then Some "side-band-64k"
-    else if List.mem "side-band" capabilities
-    then Some "side-band"
-    else None in
-  let advertised capability = List.mem capability capabilities in
-  let fn side_band =
-    side_band :: List.filter advertised [ "ofs-delta"; "no-progress" ] in
-  Option.map fn side_band
+let hex (uid : Carton.Uid.t) = Ohex.encode (uid :> string)
 
-let fetch_v1 ~capabilities ~(want : Carton.Uid.t) q ctx =
-  match capabilities_v1 capabilities with
-  | None -> Protocol.error `No_side_band
-  | Some caps ->
-      let* () =
-        Protocol.encode_pkt ctx "want %s %s\n"
-          (Ohex.encode (want :> string))
-          (String.concat " " caps) in
-      let* () = Protocol.encode_flush_pkt ctx in
-      let* () = Protocol.encode_pkt ctx "done\n" in
-      let* () =
-        let* pkt = Protocol.decode_pkt ctx in
-        match String.trim pkt with
-        | "NAK" -> Protocol.return ()
-        | pkt ->
-            begin match err_of_pkt pkt with
+let uid_of_hex_opt str =
+  match Ohex.decode str with
+  | uid when String.length uid = 20 -> Some (Carton.Uid.unsafe_of_string uid)
+  | _ -> None
+  | exception _ -> None
+
+type shallow_update = [ `Shallow of Carton.Uid.t | `Unshallow of Carton.Uid.t ]
+
+let shallow_list ctx =
+  let rec go acc =
+    let* packet = Protocol.decode_pkt_or_delim_or_end ctx in
+    match packet with
+    | `Flush | `Delim | `End -> Protocol.return (List.rev acc)
+    | `Line line ->
+        let line = String.trim line in
+        begin match String.split_on_char ' ' line with
+        | [ "shallow"; value ] ->
+            begin match uid_of_hex_opt value with
+            | Some uid -> go (`Shallow uid :: acc)
+            | None -> Protocol.error `Invalid_pkt_line
+            end
+        | [ "unshallow"; value ] ->
+            begin match uid_of_hex_opt value with
+            | Some uid -> go (`Unshallow uid :: acc)
+            | None -> Protocol.error `Invalid_pkt_line
+            end
+        | _ ->
+            begin match err_of_pkt line with
             | Some msg -> Protocol.error (`Err msg)
             | None ->
-                Log.err (fun m -> m "Unexpected acknowledgement: %S" pkt) ;
+                Log.err (fun m -> m "Expected shallow/unshallow, got %S" line);
                 Protocol.error `Invalid_pkt_line
-            end in
-      side_band false q ctx
+            end
+        end in
+  go []
+
+type ack =
+  [ `NAK
+  | `ACK of Carton.Uid.t
+  | `ACK_continue of Carton.Uid.t
+  | `ACK_common of Carton.Uid.t
+  | `ACK_ready of Carton.Uid.t ]
+
+let contains ~sub str =
+  let n = String.length sub and m = String.length str in
+  let rec go i = i + n <= m && (String.sub str i n = sub || go (i + 1)) in
+  go 0
+
+let get_ack ctx =
+  let* packet = Protocol.decode_pkt_or_delim_or_end ctx in
+  match packet with
+  | `Flush | `Delim | `End ->
+      Log.err (fun m -> m "Expected ACK/NAK, got a flush packet");
+      Protocol.error `Invalid_pkt_line
+  | `Line line ->
+      let line = String.trim line in
+      if line = "NAK" then Protocol.return `NAK
+      else if String.starts_with ~prefix:"ACK " line && String.length line >= 44
+      then
+        match uid_of_hex_opt (String.sub line 4 40) with
+        | None -> Protocol.error `Invalid_pkt_line
+        | Some uid ->
+            let rest = String.sub line 44 (String.length line - 44) in
+            if String.trim rest = "" then Protocol.return (`ACK uid)
+            else if contains ~sub:"continue" rest then Protocol.return (`ACK_continue uid)
+            else if contains ~sub:"common" rest then Protocol.return (`ACK_common uid)
+            else if contains ~sub:"ready" rest then Protocol.return (`ACK_ready uid)
+            else Protocol.return (`ACK uid)
+      else
+        match err_of_pkt line with
+        | Some msg -> Protocol.error (`Err msg)
+        | None ->
+            Log.err (fun m -> m "Expected ACK/NAK, got %S" line);
+            Protocol.error `Invalid_pkt_line
