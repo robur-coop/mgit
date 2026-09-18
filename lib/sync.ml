@@ -78,6 +78,16 @@ module Make (Flow : Git_flow.S) = struct
     begin match store.head t with Some uid -> go [ uid ] | None -> () end;
     List.rev !acc
 
+  let is_ancestor t store uid =
+    let fn commit =
+      Carton.Uid.equal commit uid
+      ||
+      match store.read t commit with
+      | Some (`A, payload) ->
+          List.exists (Carton.Uid.equal uid) (Git_object.parents_of_commit payload)
+      | _ -> false in
+    List.exists fn (commits t store)
+
   let shallows t store =
     let fn uid =
       match store.read t uid with
@@ -256,5 +266,63 @@ module Make (Flow : Git_flow.S) = struct
             let after = paths t store in
             Ok (diff ~before ~after)
           end
+        end
+
+  let push t store ~pack = function
+    | None -> Ok ()
+    | Some { ctx= remote_ctx; edn; _ } ->
+        begin match store.head t with
+        | None -> Ok ()
+        | Some new_uid ->
+            let* flow = Flow.connect remote_ctx edn in
+            let finally () = Flow.close flow in
+            Fun.protect ~finally @@ fun () ->
+            let ctx = Protocol.ctx () in
+            let host = edn.Endpoint.host and path = edn.Endpoint.path in
+            let request =
+              Smart.proto_request ~version:1 ~service:"git-receive-pack" ~host
+                path ctx in
+            let* () = Run.run flow (reword request) in
+            let* advertisement = Run.run flow (reword (Smart.advertisement ctx)) in
+            begin match advertisement with
+            | Smart.V2 _ -> error_msgf "Unexpected protocol v2 from git-receive-pack"
+            | Smart.V1 { refs; capabilities } ->
+                let name = store.branch t in
+                let old_uid =
+                  Option.map Git_object.uid_of_hex_exn
+                    (List.assoc_opt name refs.Smart.refs) in
+                let fast_forward =
+                  match old_uid with
+                  | None -> true
+                  | Some old_uid -> is_ancestor t store old_uid in
+                if old_uid = Some new_uid then Ok ()
+                else if not fast_forward then
+                  error_msgf "%s: the remote has commits we do not have \
+                              (non-fast-forward), pull first" name
+                else
+                  let* uids =
+                    Closure.uncommon ~read:(store.read t)
+                      ~exclude:(Option.to_list old_uid) new_uid in
+                  Log.debug (fun m -> m "push %d object(s)" (List.length uids));
+                  let* seq = pack uids in
+                  let capabilities =
+                    List.filter
+                      (fun cap -> List.mem cap capabilities)
+                      [ "report-status"; "ofs-delta" ] in
+                  let commands = [ { Smart.old_uid; new_uid; name } ] in
+                  let* () =
+                    Run.run flow
+                      (reword (Smart.send_commands ~capabilities commands ctx)) in
+                  let* () = Run.run flow (reword (Smart.send_seq seq ctx)) in
+                  if not (List.mem "report-status" capabilities) then Ok ()
+                  else
+                    let* report = Run.run flow (reword (Smart.report_status ctx)) in
+                    match (report.Smart.unpack, List.assoc_opt name report.statuses) with
+                    | Error reason, _ ->
+                        error_msgf "The remote refused our PACK file: %s" reason
+                    | Ok (), Some (Error reason) ->
+                        error_msgf "The remote refused to update %s: %s" name reason
+                    | Ok (), (Some (Ok ()) | None) -> Ok ()
+            end
         end
 end
