@@ -13,11 +13,11 @@ type error =
   | `Not_found of string ]
 
 type 't store =
-  { head : 't -> uid option
-  ; tree_root : 't -> uid option
+  { references : 't -> (string * uid) list
   ; read : 't -> uid -> ([ `A | `B | `C | `D ] * string) option
-  ; branch : 't -> string
-  ; is_empty : 't -> bool }
+  ; branch : 't -> string }
+
+let head t store = List.assoc_opt (store.branch t) (store.references t)
 
 module Endpoint = Endpoint
 
@@ -62,7 +62,7 @@ module Make (Flow : S) = struct
 
   let reword t = Protocol.reword_error (fun err -> `Msg (Fmt.str "%a" Smart.pp_error err)) t
 
-  let paths t store =
+  let paths t store commit =
     let tbl = Hashtbl.create 0x100 in
     let rec go rev_path uid =
       match store.read t uid with
@@ -79,8 +79,11 @@ module Make (Flow : S) = struct
               List.iter each (Mgit_object.Tree.to_list tree)
           end
       | _ -> () in
-    begin match store.tree_root t with
-    | Some root -> go [] root | None -> () end;
+    let tree_root =
+      match Option.map (store.read t) commit with
+      | Some (Some (`A, payload)) -> Mgit_object.tree_of_commit payload
+      | _ -> None in
+    Option.iter (go []) tree_root;
     tbl
 
   let diff ~before ~after =
@@ -97,7 +100,7 @@ module Make (Flow : S) = struct
     Hashtbl.iter added after;
     List.sort_uniq compare !changes
 
-  let commits t store =
+  let commits t store roots =
     let seen = Hashtbl.create 0x10 in
     let acc = ref [] in
     let rec go = function
@@ -111,10 +114,12 @@ module Make (Flow : S) = struct
               go (rest @ Mgit_object.parents_of_commit payload)
           | _ -> go rest
           end in
-    begin match store.head t with Some uid -> go [ uid ] | None -> () end;
+    go roots;
     List.rev !acc
 
-  let is_ancestor t store uid =
+  let heads t store = List.map snd (store.references t)
+
+  let is_ancestor t store ~of_:root uid =
     let fn commit =
       Carton.Uid.equal commit uid
       ||
@@ -122,7 +127,7 @@ module Make (Flow : S) = struct
       | Some (`A, payload) ->
           List.exists (Carton.Uid.equal uid) (Mgit_object.parents_of_commit payload)
       | _ -> false in
-    List.exists fn (commits t store)
+    List.exists fn (commits t store [ root ])
 
   let shallows t store =
     let fn uid =
@@ -131,7 +136,7 @@ module Make (Flow : S) = struct
           let parents = Mgit_object.parents_of_commit payload in
           List.exists (fun uid -> store.read t uid = None) parents
       | _ -> false in
-    List.filter fn (commits t store)
+    List.filter fn (commits t store (heads t store))
 
   let negotiator t store ~deepen refs =
     let load uid =
@@ -151,53 +156,61 @@ module Make (Flow : S) = struct
         | _ -> () in
       List.iter fn refs.Smart.refs
     end;
-    Option.iter (Negotiator.add_tip negotiator) (store.head t);
+    List.iter (Negotiator.add_tip negotiator) (heads t store);
     negotiator
 
-  let want t store refs =
-    match List.assoc_opt (store.branch t) refs.Smart.refs with
-    | Some hex -> Ok (store.branch t, Mgit_object.uid_of_hex_exn hex)
-    | None ->
-        begin match (store.is_empty t, refs.Smart.head_symref) with
-        | true, Some name ->
-            begin match List.assoc_opt name refs.Smart.refs with
-            | Some hex -> Ok (name, Mgit_object.uid_of_hex_exn hex)
-            | None -> error_msgf "%s does not exist on the remote" name
-            end
-        | _ -> error_msgf "%s does not exist on the remote" (store.branch t)
-        end
+  let replace references name uid =
+    if List.mem_assoc name references
+    then List.map (fun (name', uid') -> if name = name' then (name, uid) else (name', uid')) references
+    else references @ [ (name, uid) ]
 
-  let receive t store ?deepen ~stateless flow ctx advertisement refs want into =
-     let q = Flux.Bqueue.(create with_close) 0x100 in
-     let received = ref 0 in
-     let consumer =
-       Miou.async @@ fun () ->
-       let from = Flux.Source.bqueue q in
-       let via = Flux.Flow.tap (fun str -> received := !received + String.length str) in
-       let (), leftover = Flux.Stream.run ~from ~via ~into in
-       Option.iter Flux.Source.dispose leftover in
-     let shallows = shallows t store in
-     (* let deepen = if t.depth > 0 then Some t.depth else None in *)
-     let negotiator = negotiator t store ~deepen refs in
-     let fetch =
-       match advertisement with
-       | Smart.V2 { capabilities } ->
-           Find_common.fetch_v2 ~thin:true ~capabilities ~negotiator ~shallows
-             ?deepen [ want ] q ctx
-       | Smart.V1 { capabilities; _ } ->
-           Find_common.fetch_v1 ~stateless ~thin:true ~capabilities ~negotiator
-             ~shallows ?deepen [ want ] q ctx in
-     let result = run flow (reword fetch) in
-     Flux.Bqueue.close q;
-     Miou.await_exn consumer;
-     begin match result with
-     | Error (`Msg _) as err -> err
-     | Ok (_, true) ->
-         error_msgf "The remote reported an error during the fetch"
-     | Ok (_shallow_info, false) ->
-         Log.debug (fun m -> m "PACK of %d byte(s) received" !received);
-         Ok !received
-     end
+  let targets t store ?only refs =
+    let remote name =
+      Option.map Mgit_object.uid_of_hex_exn (List.assoc_opt name refs.Smart.refs) in
+    let locals = store.references t in
+    match only with
+    | Some names ->
+        let fn acc name =
+          let* acc = acc in
+          match remote name with
+          | Some uid -> Ok (replace acc name uid)
+          | None -> Error (`Not_found name) in
+        List.fold_left fn (Ok locals) names
+    | None when locals = [] ->
+        let name = store.branch t in
+        begin match (remote name, refs.Smart.head_symref) with
+        | Some uid, _ -> Ok [ (name, uid) ]
+        | None, Some name' when Option.is_some (remote name') ->
+            Ok [ (name', Option.get (remote name')) ]
+        | None, _ -> error_msgf "%s does not exist on the remote" name
+        end
+    | None ->
+        let fn (name, uid) = (name, Option.value ~default:uid (remote name)) in
+        Ok (List.map fn locals)
+
+  let receive t store ?deepen ~stateless flow ctx advertisement refs wants
+      (Flux.Sink into) =
+    let acc = ref (into.init ()) and received = ref 0 in
+    let push str =
+      received := !received + String.length str;
+      acc := into.push !acc str in
+    let shallows = shallows t store in
+    let negotiator = negotiator t store ~deepen refs in
+    let fetch =
+      match advertisement with
+      | Smart.V2 { capabilities } ->
+          Find_common.fetch_v2 ~thin:true ~capabilities ~negotiator ~shallows
+            ?deepen wants push ctx
+      | Smart.V1 { capabilities; _ } ->
+          Find_common.fetch_v1 ~stateless ~thin:true ~capabilities ~negotiator
+            ~shallows ?deepen wants push ctx in
+    match run flow (reword fetch) with
+    | Error (`Msg _) as err -> err
+    | Ok (_, true) -> error_msgf "The remote reported an error during the fetch"
+    | Ok (_shallow_info, false) ->
+        into.stop !acc;
+        Log.debug (fun m -> m "PACK of %d byte(s) received" !received);
+        Ok !received
 
   type 'tmp located = { kind : Carton.Kind.t; length : int; meta : 'tmp Carton.t * int }
 
@@ -245,11 +258,10 @@ module Make (Flow : S) = struct
 
   type ('t, 'tmp, 'err) generation =
        't
-    -> branch:string
+    -> references:(string * uid) list
     -> lookup:(uid -> 'tmp located option)
     -> reader:Mgit_change.read
     -> news:Mgit_change.news
-    -> uid
     -> (unit, 'err) result
 
   type 'tmp tmp =
@@ -260,6 +272,21 @@ module Make (Flow : S) = struct
 
   let is_stateless edn =
     match edn.Endpoint.scheme with `HTTP | `HTTPS -> true | `Git | `SSH -> false
+
+  (* NOTE(dinosaure): here, we can not use [Miou.Ownership] because [Mgit_http]
+     has a [close] which emits effects. So we can not create a resource with a
+     [finally] which closes. *)
+
+  let reraise exn = Printexc.raise_with_backtrace exn (Printexc.get_raw_backtrace ())
+
+  let with_flow flow fn =
+    match fn () with
+    | value -> Flow.close flow; value
+    | exception (Miou.Cancelled as exn) -> reraise exn
+    | exception exn ->
+        let bt = Printexc.get_raw_backtrace () in
+        Flow.close flow;
+        Printexc.raise_with_backtrace exn bt
 
   let connect remote_ctx edn ~service ~version =
     let* flow = Flow.connect remote_ctx edn ~service ~version in
@@ -272,63 +299,91 @@ module Make (Flow : S) = struct
         begin match run flow (reword request) with
         | Ok () -> Ok (flow, ctx)
         | Error _ as err -> Flow.close flow; err
+        | exception (Miou.Cancelled as exn) -> reraise exn
+        | exception exn ->
+            let bt = Printexc.get_raw_backtrace () in
+            Flow.close flow;
+            Printexc.raise_with_backtrace exn bt
         end
 
-  let pull t store ~generation ?deepen tmp = function
+  let pull t store ~generation ?deepen ?only tmp = function
     | None -> error_msgf "No remote configured"
     | Some { ctx= remote_ctx; edn } ->
         let* flow, ctx = connect remote_ctx edn ~service:"git-upload-pack" ~version:2 in
-        Fun.protect ~finally:(fun () -> Flow.close flow) @@ fun () ->
+        with_flow flow @@ fun () ->
         let* advertisement = run flow (reword (Smart.advertisement ctx)) in
         let* refs =
           match advertisement with
           | Smart.V1 { refs; _ } -> Ok refs
           | Smart.V2 _ -> run flow (reword (Smart.ls_refs ctx)) in
-        let* name, want = want t store refs in
-        if Some want = store.head t then begin
-          if not (is_stateless edn)
-          then ignore (run flow (reword (Protocol.encode_flush_pkt ctx)));
-          Ok []
-        end
+        let stateless = is_stateless edn in
+        let done_ () =
+          if not stateless
+          then ignore (run flow (reword (Protocol.encode_flush_pkt ctx))) in
+        let locals = store.references t in
+        let* targets = targets t store ?only refs in
+        if targets = locals then begin done_ (); Ok [] end
         else begin
-          let before = paths t store in
-          (* NOTE(dinosaure): download the PACK file into [tmp]. *)
-          let stateless = is_stateless edn in
-          let* len =
-            receive t store ?deepen ~stateless flow ctx advertisement refs want
-              tmp.into in
-          if len = 0 then Ok []
+          let before =
+            let fn (name, _) = (name, paths t store (List.assoc_opt name locals)) in
+            List.map fn targets in
+          (* NOTE(dinosaure): a commit we already have (another branch) is not
+             asked for. *)
+          let wants =
+            let fn acc (_, uid) =
+              if store.read t uid = None && not (List.mem uid acc)
+              then uid :: acc else acc in
+            List.rev (List.fold_left fn [] targets) in
+          let* received =
+            if wants = [] then begin done_ (); Ok None end
+            else
+              (* NOTE(dinosaure): download the PACK file into [tmp]. *)
+              let* len =
+                receive t store ?deepen ~stateless flow ctx advertisement refs wants
+                  tmp.into in
+              if len = 0 then Ok None
+              else
+                (* NOTE(dinosaure): analyze the PACK file. *)
+                let extern = extern t store in
+                let carton = tmp.carton ~len ~extern in
+                let* _carton, tbl = analyse ~extern (tmp.seq ~len) carton in
+                Ok (Some tbl) in
+          let lookup uid =
+            match received with
+            | None -> None
+            | Some tbl -> Hashtbl.find_opt tbl (uid : uid :> string) in
+          let reader uid =
+            match lookup uid with
+            | None -> store.read t uid
+            | Some { meta= carton, cursor; _ } ->
+                let value = value_of_cursor carton ~cursor in
+                let len = Carton.Value.length value in
+                let bstr = Carton.Value.bigstring value in
+                Some (Carton.Value.kind value, Bstr.sub_string bstr ~off:0 ~len)
+          in
+          if wants <> [] && received = None then Ok []
           else begin
-            (* NOTE(dinosaure): analyze the PACK file. *)
-            let extern = extern t store in
-            let carton = tmp.carton ~len ~extern in
-            let* _carton, tbl = analyse ~extern (tmp.seq ~len) carton in
-            let lookup uid = Hashtbl.find_opt tbl (uid : uid :> string) in
-            let reader uid =
-              match lookup uid with
-              | None -> store.read t uid
-              | Some { meta= carton, cursor; _ } ->
-                  let value = value_of_cursor carton ~cursor in
-                  let len = Carton.Value.length value in
-                  let bstr = Carton.Value.bigstring value in
-                  Some (Carton.Value.kind value, Bstr.sub_string bstr ~off:0 ~len)
-            in
             let news = Mgit_change.make () in
             (* NOTE(dinosaure): save it. *)
-            let* () = generation t ~branch:name ~lookup ~reader ~news want in
-            let after = paths t store in
-            Ok (diff ~before ~after)
+            let* () = generation t ~references:targets ~lookup ~reader ~news in
+            let afters = store.references t in
+            let fn (name, before) =
+              let after = paths t store (List.assoc_opt name afters) in
+              match diff ~before ~after with
+              | [] -> None
+              | changes -> Some (name, changes) in
+            Ok (List.filter_map fn before)
           end
         end
 
   let push t store ~pack = function
     | None -> Ok ()
     | Some { ctx= remote_ctx; edn; _ } ->
-        begin match store.head t with
+        begin match head t store with
         | None -> Ok ()
         | Some new_uid ->
             let* flow, ctx = connect remote_ctx edn ~service:"git-receive-pack" ~version:1 in
-            Fun.protect ~finally:(fun () -> Flow.close flow) @@ fun () ->
+            with_flow flow @@ fun () ->
             let* advertisement = run flow (reword (Smart.advertisement ctx)) in
             begin match advertisement with
             | Smart.V2 _ -> error_msgf "Unexpected protocol v2 from git-receive-pack"
@@ -340,15 +395,20 @@ module Make (Flow : S) = struct
                 let fast_forward =
                   match old_uid with
                   | None -> true
-                  | Some old_uid -> is_ancestor t store old_uid in
+                  | Some old_uid -> is_ancestor t store ~of_:new_uid old_uid in
                 if old_uid = Some new_uid then Ok ()
                 else if not fast_forward then
                   error_msgf "%s: the remote has commits we do not have \
                               (non-fast-forward), pull first" name
                 else
+                  let exclude =
+                    let fn (_, hex) =
+                      match Mgit_object.uid_of_hex hex with
+                      | Ok uid when Option.is_some (store.read t uid) -> Some uid
+                      | _ -> None in
+                    List.filter_map fn refs.Smart.refs in
                   let* uids =
-                    Mgit_closure.uncommon ~read:(store.read t)
-                      ~exclude:(Option.to_list old_uid) new_uid in
+                    Mgit_closure.uncommon ~read:(store.read t) ~exclude new_uid in
                   Log.debug (fun m -> m "push %d object(s)" (List.length uids));
                   let* seq = pack uids in
                   let capabilities =
