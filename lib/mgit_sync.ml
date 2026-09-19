@@ -270,6 +270,24 @@ module Make (Flow : S) = struct
         len:int -> extern:(uid -> (Carton.Kind.t * Bstr.t) option) -> 'tmp Carton.t
     ; into : (string, unit) Flux.sink }
 
+  let ingest t store tmp ~len =
+    let* lookup =
+      if len = 0 then Ok (Fun.const None)
+      else
+        let extern = extern t store in
+        let carton = tmp.carton ~len ~extern in
+        let* _carton, tbl = analyse ~extern (tmp.seq ~len) carton in
+        Ok (fun (uid : uid) -> Hashtbl.find_opt tbl (uid :> string)) in
+    let reader uid =
+      match lookup uid with
+      | None -> store.read t uid
+      | Some { meta= carton, cursor; _ } ->
+          let value = value_of_cursor carton ~cursor in
+          let len = Carton.Value.length value in
+          let bstr = Carton.Value.bigstring value in
+          Some (Carton.Value.kind value, Bstr.sub_string bstr ~off:0 ~len) in
+    Ok (lookup, reader)
+
   let is_stateless edn =
     match edn.Endpoint.scheme with `HTTP | `HTTPS -> true | `Git | `SSH -> false
 
@@ -344,23 +362,12 @@ module Make (Flow : S) = struct
               if len = 0 then Ok None
               else
                 (* NOTE(dinosaure): analyze the PACK file. *)
-                let extern = extern t store in
-                let carton = tmp.carton ~len ~extern in
-                let* _carton, tbl = analyse ~extern (tmp.seq ~len) carton in
-                Ok (Some tbl) in
-          let lookup uid =
+                let* lookup, reader = ingest t store tmp ~len in
+                Ok (Some (lookup, reader)) in
+          let lookup, reader =
             match received with
-            | None -> None
-            | Some tbl -> Hashtbl.find_opt tbl (uid : uid :> string) in
-          let reader uid =
-            match lookup uid with
-            | None -> store.read t uid
-            | Some { meta= carton, cursor; _ } ->
-                let value = value_of_cursor carton ~cursor in
-                let len = Carton.Value.length value in
-                let bstr = Carton.Value.bigstring value in
-                Some (Carton.Value.kind value, Bstr.sub_string bstr ~off:0 ~len)
-          in
+            | None -> (Fun.const None, store.read t)
+            | Some (lookup, reader) -> (lookup, reader) in
           if wants <> [] && received = None then Ok []
           else begin
             let news = Mgit_change.make () in
@@ -376,68 +383,73 @@ module Make (Flow : S) = struct
           end
         end
 
-  let push t store ~pack = function
+  let push t store ~branches ~pack = function
     | None -> Ok ()
     | Some { ctx= remote_ctx; edn; _ } ->
-        begin match head t store with
-        | None -> Ok ()
-        | Some new_uid ->
-            let* flow, ctx = connect remote_ctx edn ~service:"git-receive-pack" ~version:1 in
-            with_flow flow @@ fun () ->
-            let* advertisement = run flow (reword (Smart.advertisement ctx)) in
-            begin match advertisement with
-            | Smart.V2 _ -> error_msgf "Unexpected protocol v2 from git-receive-pack"
-            | Smart.V1 { refs; capabilities } ->
-                let name = store.branch t in
+        let locals = store.references t in
+        let fn name = Option.map (fun uid -> (name, uid)) (List.assoc_opt name locals) in
+        let branches = List.filter_map fn branches in
+        if branches = [] then Ok ()
+        else
+          let* flow, ctx = connect remote_ctx edn ~service:"git-receive-pack" ~version:1 in
+          with_flow flow @@ fun () ->
+          let* advertisement = run flow (reword (Smart.advertisement ctx)) in
+          match advertisement with
+          | Smart.V2 _ -> error_msgf "Unexpected protocol v2 from git-receive-pack"
+          | Smart.V1 { refs; capabilities } ->
+              let command (name, new_uid) =
                 let old_uid =
-                  Option.map Mgit_object.uid_of_hex_exn
-                    (List.assoc_opt name refs.Smart.refs) in
-                let fast_forward =
-                  match old_uid with
-                  | None -> true
-                  | Some old_uid -> is_ancestor t store ~of_:new_uid old_uid in
-                if old_uid = Some new_uid then Ok ()
-                else if not fast_forward then
-                  error_msgf "%s: the remote has commits we do not have \
-                              (non-fast-forward), pull first" name
-                else
-                  let exclude =
-                    let fn (_, hex) =
-                      match Mgit_object.uid_of_hex hex with
-                      | Ok uid when Option.is_some (store.read t uid) -> Some uid
-                      | _ -> None in
-                    List.filter_map fn refs.Smart.refs in
-                  let* uids =
-                    Mgit_closure.uncommon ~read:(store.read t) ~exclude new_uid in
-                  Log.debug (fun m -> m "push %d object(s)" (List.length uids));
-                  let* seq = pack uids in
-                  let capabilities =
-                    List.filter
-                      (fun cap -> List.mem cap capabilities)
-                      [ "report-status"; "ofs-delta" ] in
-                  let commands = [ { Smart.old_uid; new_uid; name } ] in
-                  let exchange =
-                    let ( let* ) = Protocol.bind in
-                    let* () = Smart.send_commands ~capabilities commands ctx in
-                    let* () = Smart.send_seq seq ctx in
-                    if List.mem "report-status" capabilities
-                    then
-                      let* report = Smart.report_status ctx in
-                      Protocol.return (Some report)
-                    else Protocol.return None in
-                  let* report = run flow (reword exchange) in
-                  match report with
-                  | None -> Ok ()
-                  | Some report ->
-                      begin match
-                        (report.Smart.unpack, List.assoc_opt name report.statuses)
-                      with
-                      | Error reason, _ ->
-                          error_msgf "The remote refused our PACK file: %s" reason
-                      | Ok (), Some (Error reason) ->
+                  Option.map Mgit_object.uid_of_hex_exn (List.assoc_opt name refs.Smart.refs) in
+                match old_uid with
+                | Some old_uid when Carton.Uid.equal old_uid new_uid -> Ok None
+                | Some old_uid when not (is_ancestor t store ~of_:new_uid old_uid) ->
+                    error_msgf "%s: the remote has commits we do not have \
+                                (non-fast-forward), pull first" name
+                | old_uid -> Ok (Some { Smart.old_uid; new_uid; name }) in
+              let* commands =
+                List.fold_left
+                  (fun acc branch ->
+                    let* acc = acc in
+                    let* command = command branch in
+                    Ok (Option.fold ~none:acc ~some:(fun c -> c :: acc) command))
+                  (Ok []) branches in
+              let commands = List.rev commands in
+              if commands = [] then Ok ()
+              else
+                let exclude =
+                  let fn (_, hex) =
+                    match Mgit_object.uid_of_hex hex with
+                    | Ok uid when Option.is_some (store.read t uid) -> Some uid
+                    | _ -> None in
+                  List.filter_map fn refs.Smart.refs in
+                let roots = List.map (fun { Smart.new_uid; _ } -> new_uid) commands in
+                let* uids = Mgit_closure.uncommon ~read:(store.read t) ~exclude roots in
+                Log.debug (fun m -> m "push %d object(s)" (List.length uids));
+                let* seq = pack uids in
+                let capabilities =
+                  List.filter
+                    (fun cap -> List.mem cap capabilities)
+                    [ "report-status"; "ofs-delta"; "atomic" ] in
+                let exchange =
+                  let ( let* ) = Protocol.bind in
+                  let* () = Smart.send_commands ~capabilities commands ctx in
+                  let* () = Smart.send_seq seq ctx in
+                  if List.mem "report-status" capabilities
+                  then
+                    let* report = Smart.report_status ctx in
+                    Protocol.return (Some report)
+                  else Protocol.return None in
+                let* report = run flow (reword exchange) in
+                match report with
+                | None -> Ok ()
+                | Some { Smart.unpack= Error reason; _ } ->
+                    error_msgf "The remote refused our PACK file: %s" reason
+                | Some { Smart.unpack= Ok (); statuses } ->
+                    let fn acc { Smart.name; _ } =
+                      let* () = acc in
+                      match List.assoc_opt name statuses with
+                      | Some (Error reason) ->
                           error_msgf "The remote refused to update %s: %s" name reason
-                      | Ok (), (Some (Ok ()) | None) -> Ok ()
-                      end
-            end
-        end
+                      | Some (Ok ()) | None -> Ok () in
+                    List.fold_left fn (Ok ()) commands
 end
