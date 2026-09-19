@@ -123,8 +123,10 @@ module Make (Block : Mgit_blk.BLOCK) = struct
     let finally () = give t reader in
     Fun.protect ~finally @@ fun () -> fn reader
 
-  let acquire t = Atomic.incr t.readers
-  let release t = Atomic.decr t.readers
+  let protect t fn =
+    Atomic.incr t.readers;
+    let finally () = Atomic.decr t.readers in
+    Fun.protect ~finally fn
 
   let format ?ratio ?length blk =
     match Blk.format ?ratio ~rd ~wr ?length blk with
