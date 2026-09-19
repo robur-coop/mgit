@@ -36,6 +36,7 @@ module Make (Client : CLIENT) = struct
     ; mutable current : request option
     ; sniff : Buffer.t
     ; state : Buffer.t
+    ; mutable scanned : int
     ; mutable state_done : bool }
 
   let connect ctx edn ~service ~version =
@@ -51,6 +52,7 @@ module Make (Client : CLIENT) = struct
       ; current= None
       ; sniff= Buffer.create 64
       ; state= Buffer.create 0x100
+      ; scanned= 0
       ; state_done= false }
 
   let start t ~meth ~headers ~uri ~with_body =
@@ -58,7 +60,9 @@ module Make (Client : CLIENT) = struct
     let body = if with_body then Some (Flux.Bqueue.(create with_close) 0x100) else None in
     let prm =
       Miou.async @@ fun () ->
-      let finally () = inhibit (fun () -> Flux.Bqueue.close response) in
+      let finally () =
+        Flux.Bqueue.close response;
+        Option.iter Flux.Bqueue.close body in
       Fun.protect ~finally @@ fun () ->
       let fn str = inhibit (fun () -> Flux.Bqueue.put response str) in
       let body = Option.map Flux.Bqueue.to_seq body in
@@ -69,8 +73,8 @@ module Make (Client : CLIENT) = struct
     ; result= None }
 
   let stop req =
-    Option.iter (fun q -> inhibit (fun () -> Flux.Bqueue.close q)) req.body;
-    inhibit (fun () -> Flux.Bqueue.halt req.response);
+    Option.iter Flux.Bqueue.close req.body;
+    Flux.Bqueue.halt req.response;
     if Option.is_none req.result then
       let result = match Miou.await req.prm with
         | Ok result -> result
@@ -98,17 +102,15 @@ module Make (Client : CLIENT) = struct
     go 0
 
   let scan t =
-    let str = Buffer.contents t.state in
-    let rec go pos =
-      if pos + 4 > String.length str then ()
-      else
-        match int_of_string_opt ("0x" ^ String.sub str pos 4) with
+    let rec go () =
+      if t.scanned + 4 <= Buffer.length t.state then
+        match int_of_string_opt ("0x" ^ Buffer.sub t.state t.scanned 4) with
         | Some 0 ->
-            Buffer.truncate t.state (pos + 4);
+            Buffer.truncate t.state (t.scanned + 4);
             t.state_done <- true
-        | Some len when len >= 4 -> go (pos + len)
-        | _ -> go (pos + 4) in
-    go 0
+        | Some len when len >= 4 -> t.scanned <- t.scanned + len; go ()
+        | _ -> t.scanned <- t.scanned + 4; go () in
+    go ()
 
   let post t =
     let uri = Fmt.str "%s/%s" t.base t.service in
@@ -134,11 +136,17 @@ module Make (Client : CLIENT) = struct
       Buffer.add_string t.state str;
       scan t
     end;
-    begin match req.body with
-    | Some q -> Flux.Bqueue.put q str
-    | None -> ()
-    end;
-    Ok len
+    match req.body with
+    | None -> Ok len
+    | Some q ->
+        begin match Flux.Bqueue.put q str with
+        | () -> Ok len
+        | exception Invalid_argument _ ->
+            begin match result req with
+            | Error (`Msg _ as err) -> finish t; Error err
+            | Ok () -> finish t; error_msgf "The remote does not read our request anymore"
+            end
+        end
 
   let discover t =
     let uri = Fmt.str "%s/info/refs?service=%s" t.base t.service in
@@ -177,4 +185,11 @@ module Make (Client : CLIENT) = struct
         end
 
   let close t = finish t
+
+  let abort t =
+    let fn req =
+      Option.iter Flux.Bqueue.close req.body;
+      Flux.Bqueue.halt req.response in
+    Option.iter fn t.current;
+    t.current <- None
 end

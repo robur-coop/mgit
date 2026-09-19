@@ -11,4 +11,8 @@ module type CLIENT = sig
     -> (unit, [> `Msg of string ]) result
 end
 
-module Make (Client : CLIENT) : Mgit_sync.S with type ctx = Client.ctx
+module Make (Client : CLIENT) : sig
+  include Mgit_sync.S with type ctx = Client.ctx
+
+  val abort : t -> unit
+end
