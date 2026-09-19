@@ -161,7 +161,7 @@ let ls_refs ctx =
   let head = head_of_refs refs head_symref in
   Protocol.return { refs; peeled; head; head_symref }
 
-let rec side_band errored q ctx =
+let rec side_band errored push ctx =
   let* pkt = Protocol.decode_pkt ctx in
   if String.length pkt = 0
   then Protocol.return errored
@@ -169,12 +169,12 @@ let rec side_band errored q ctx =
     let data = String.sub pkt 1 (String.length pkt - 1) in
     match pkt.[0] with
     | '\001' ->
-        Flux.Bqueue.put q data ;
-        side_band errored q ctx
+        push data ;
+        side_band errored push ctx
     | '\003' ->
         Log.err (fun m -> m "[remote]: %s" data) ;
-        side_band true q ctx
-    | _ -> side_band errored q ctx
+        side_band true push ctx
+    | _ -> side_band errored push ctx
 
 let rec iter fn = function
   | [] -> Protocol.return ()

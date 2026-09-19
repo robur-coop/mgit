@@ -125,7 +125,7 @@ let find_common ~stateless ~multi_ack ~no_done ~caps ~negotiator ~shallows
 let has cap capabilities = List.mem cap capabilities
 
 let fetch_v1 ?(stateless = false) ?(thin = false) ~capabilities ~negotiator
-    ~shallows ?deepen wants q ctx =
+    ~shallows ?deepen wants push ctx =
   let side_band =
     if has "side-band-64k" capabilities then Some "side-band-64k"
     else if has "side-band" capabilities then Some "side-band"
@@ -158,7 +158,7 @@ let fetch_v1 ?(stateless = false) ?(thin = false) ~capabilities ~negotiator
         match result with
         | `Close -> return (updates, false)
         | `Continue ->
-            let* errored = Smart.side_band false q ctx in
+            let* errored = Smart.side_band false push ctx in
             return (updates, errored)
       end
 
@@ -273,7 +273,7 @@ let rec sections updates ctx =
   | `Flush | `Delim | `End -> sections updates ctx
 
 let fetch_v2 ?(thin = false) ~capabilities ~negotiator ~shallows ?deepen wants
-    q ctx =
+    push ctx =
   if (shallows <> [] || deepen <> None)
      && not (feature ~command:"fetch" "shallow" capabilities)
   then Protocol.error (`Err "the remote does not support shallow requests")
@@ -294,7 +294,7 @@ let fetch_v2 ?(thin = false) ~capabilities ~negotiator ~shallows ?deepen wants
         if ready then get_pack () else send_request ~common ~seen_ack
     and get_pack () =
       let* updates = sections [] ctx in
-      let* errored = Smart.side_band false q ctx in
+      let* errored = Smart.side_band false push ctx in
       return (updates, errored) in
     send_request ~common:[] ~seen_ack:false
   end
