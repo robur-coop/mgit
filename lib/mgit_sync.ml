@@ -324,7 +324,7 @@ module Make (Flow : S) = struct
             Printexc.raise_with_backtrace exn bt
         end
 
-  let pull t store ~generation ?deepen ?only tmp = function
+  let pull t store ~generation ?deepen ?(unshallow = false) ?only tmp = function
     | None -> error_msgf "No remote configured"
     | Some { ctx= remote_ctx; edn } ->
         let* flow, ctx = connect remote_ctx edn ~service:"git-upload-pack" ~version:2 in
@@ -340,16 +340,16 @@ module Make (Flow : S) = struct
           then ignore (run flow (reword (Protocol.encode_flush_pkt ctx))) in
         let locals = store.references t in
         let* targets = targets t store ?only refs in
-        if targets = locals then begin done_ (); Ok [] end
+        if targets = locals && not unshallow then begin done_ (); Ok [] end
         else begin
           let before =
             let fn (name, _) = (name, paths t store (List.assoc_opt name locals)) in
             List.map fn targets in
           (* NOTE(dinosaure): a commit we already have (another branch) is not
-             asked for. *)
+             asked for, unless we want what is behind it. *)
           let wants =
             let fn acc (_, uid) =
-              if store.read t uid = None && not (List.mem uid acc)
+              if (unshallow || store.read t uid = None) && not (List.mem uid acc)
               then uid :: acc else acc in
             List.rev (List.fold_left fn [] targets) in
           let* received =

@@ -15,7 +15,7 @@ let commits ~read ~depth roots =
   let rec go = function
     | [] -> ()
     | (uid, _) :: rest when visited uid -> go rest
-    | (uid, d) :: rest when d > depth -> boundary := uid :: !boundary; go rest
+    | (uid, d) :: rest when depth > 0 && d > depth -> boundary := uid :: !boundary; go rest
     | (uid, d) :: rest ->
         begin match read uid with
         | None -> boundary := uid :: !boundary; go rest
