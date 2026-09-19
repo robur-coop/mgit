@@ -21,7 +21,7 @@ let commits ~read ~depth root =
         | None -> boundary := uid :: !boundary; go rest
         | Some (`A, payload) ->
             kept := uid :: !kept;
-            let parents = Git_object.parents_of_commit payload in
+            let parents = Mgit_object.parents_of_commit payload in
             let parents = List.map (fun uid -> (uid, d + 1)) parents in
             go (rest @ parents)
         | Some _ -> raise (Not_a_commit uid)
@@ -45,11 +45,11 @@ let objects ~read commits =
         | Some (`C, _) -> blobs := uid :: !blobs; go rest
         | Some (`B, payload) ->
             trees := uid :: !trees;
-            begin match Git_object.Tree.of_string payload with
+            begin match Mgit_object.Tree.of_string payload with
             | Ok tree ->
-                let fn { Git_object.Tree.perm; node; _ } =
+                let fn { Mgit_object.Tree.perm; node; _ } =
                   if perm = `Commit then None else Some node in
-                go (rest @ List.filter_map fn (Git_object.Tree.to_list tree))
+                go (rest @ List.filter_map fn (Mgit_object.Tree.to_list tree))
             | Error (`Msg _) -> raise (Missing uid)
             end
         | Some ((`A | `D), _) -> raise (Not_a_commit uid)
@@ -57,7 +57,7 @@ let objects ~read commits =
   let roots =
     let fn uid =
       match read uid with
-      | Some (`A, payload) -> Git_object.tree_of_commit payload
+      | Some (`A, payload) -> Mgit_object.tree_of_commit payload
       | _ -> None in
     List.filter_map fn commits in
   List.iter (fun uid -> go [ uid ]) roots;
@@ -71,9 +71,9 @@ let closure ~read ~depth root =
   with
   | value -> Ok value
   | exception Missing uid ->
-      error_msgf "%a is unavailable" Git_object.pp_uid uid
+      error_msgf "%a is unavailable" Mgit_object.pp_uid uid
   | exception Not_a_commit uid ->
-      error_msgf "%a is not the expected kind of object" Git_object.pp_uid uid
+      error_msgf "%a is not the expected kind of object" Mgit_object.pp_uid uid
 
 let uncommon ~read ~exclude root =
   match
@@ -94,6 +94,6 @@ let uncommon ~read ~exclude root =
   with
   | value -> Ok value
   | exception Missing uid ->
-      error_msgf "%a is unavailable" Git_object.pp_uid uid
+      error_msgf "%a is unavailable" Mgit_object.pp_uid uid
   | exception Not_a_commit uid ->
-      error_msgf "%a is not the expected kind of object" Git_object.pp_uid uid
+      error_msgf "%a is not the expected kind of object" Mgit_object.pp_uid uid

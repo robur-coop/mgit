@@ -1,0 +1,4 @@
+(library
+ (name mgit_mem)
+ (public_name mgit.mem)
+ (libraries mgit.blk mgit.object carton))

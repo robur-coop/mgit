@@ -1,16 +1,18 @@
 type error =
   [ `Msg of string
-  | `Zone_full
+  | `Out_of_space
   | `Not_found of Carton.Uid.t ]
 
 val pp_error : error Fmt.t
 
-module Make (Block : Blk.BLOCK) : sig
+module Make (Block : Mgit_blk.BLOCK) : sig
   type t
   type fd
 
   val format : ?ratio:float -> ?length:int -> Block.t -> (unit, [> error ]) result
   val load : Block.t -> (t, [> error ]) result
+  val acquire : t -> unit
+  val release : t -> unit
   val references : t -> (string * Carton.Uid.t) list
   val prerequisites : t -> (Carton.Uid.t * string option) list
   val reference : t -> string -> Carton.Uid.t option

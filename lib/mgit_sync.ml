@@ -9,7 +9,7 @@ type uid = Carton.Uid.t
 
 type error =
   [ `Msg of string
-  | `Zone_full
+  | `Out_of_space
   | `Not_found of string ]
 
 type 't store =
@@ -19,8 +19,44 @@ type 't store =
   ; branch : 't -> string
   ; is_empty : 't -> bool }
 
-module Make (Flow : Git_flow.S) = struct
-  module Run = Git_flow.Make (Flow)
+module Endpoint = Endpoint
+
+type data = [ `End | `Len of int ]
+
+module type S = sig
+  type ctx
+  type t
+
+  val connect :
+       ctx
+    -> Endpoint.t
+    -> service:string
+    -> version:int
+    -> (t, [> `Msg of string ]) result
+
+  val recv : t -> bytes -> off:int -> len:int -> (data, [> `Msg of string ]) result
+  val send : t -> string -> off:int -> len:int -> (int, [> `Msg of string ]) result
+  val close : t -> unit
+end
+
+module Make (Flow : S) = struct
+  let run flow t =
+    let rec go = function
+      | Protocol.Return value -> Ok value
+      | Protocol.Error err -> Error err
+      | Protocol.Read { buffer; off; len; k } ->
+          begin match Flow.recv flow buffer ~off ~len with
+          | Ok value -> go (k value)
+          | Error (`Msg _ as err) -> Error err
+          | Error _ as err -> err
+          end
+      | Protocol.Write { buffer; off; len; k } ->
+          begin match Flow.send flow buffer ~off ~len with
+          | Ok len -> go (k len)
+          | Error (`Msg _ as err) -> Error err
+          | Error _ as err -> err
+          end in
+    go t
 
   type remote = { ctx : Flow.ctx; edn : Endpoint.t }
 
@@ -31,16 +67,16 @@ module Make (Flow : Git_flow.S) = struct
     let rec go rev_path uid =
       match store.read t uid with
       | Some (`B, payload) ->
-          begin match Git_object.Tree.of_string payload with
+          begin match Mgit_object.Tree.of_string payload with
           | Error (`Msg _) -> ()
           | Ok tree ->
-              let each { Git_object.Tree.perm; name; node } =
+              let each { Mgit_object.Tree.perm; name; node } =
                 match perm with
                 | `Dir -> go (name :: rev_path) node
                 | _ ->
                     let path = "/" ^ String.concat "/" (List.rev (name :: rev_path)) in
                     Hashtbl.replace tbl path node in
-              List.iter each (Git_object.Tree.to_list tree)
+              List.iter each (Mgit_object.Tree.to_list tree)
           end
       | _ -> () in
     begin match store.tree_root t with
@@ -72,7 +108,7 @@ module Make (Flow : Git_flow.S) = struct
           begin match store.read t uid with
           | Some (`A, payload) ->
               acc := uid :: !acc;
-              go (rest @ Git_object.parents_of_commit payload)
+              go (rest @ Mgit_object.parents_of_commit payload)
           | _ -> go rest
           end in
     begin match store.head t with Some uid -> go [ uid ] | None -> () end;
@@ -84,7 +120,7 @@ module Make (Flow : Git_flow.S) = struct
       ||
       match store.read t commit with
       | Some (`A, payload) ->
-          List.exists (Carton.Uid.equal uid) (Git_object.parents_of_commit payload)
+          List.exists (Carton.Uid.equal uid) (Mgit_object.parents_of_commit payload)
       | _ -> false in
     List.exists fn (commits t store)
 
@@ -92,7 +128,7 @@ module Make (Flow : Git_flow.S) = struct
     let fn uid =
       match store.read t uid with
       | Some (`A, payload) ->
-          let parents = Git_object.parents_of_commit payload in
+          let parents = Mgit_object.parents_of_commit payload in
           List.exists (fun uid -> store.read t uid = None) parents
       | _ -> false in
     List.filter fn (commits t store)
@@ -101,8 +137,8 @@ module Make (Flow : Git_flow.S) = struct
     let load uid =
       match store.read t uid with
       | Some (`A, payload) ->
-          begin match Git_object.Commit.of_string payload with
-          | Ok { Git_object.Commit.committer= { date= (date, _); _ }; parents; _ } ->
+          begin match Mgit_object.Commit.of_string payload with
+          | Ok { Mgit_object.Commit.committer= { date= (date, _); _ }; parents; _ } ->
               Some (date, parents)
           | Error _ -> None
           end
@@ -110,7 +146,7 @@ module Make (Flow : Git_flow.S) = struct
     let negotiator = Negotiator.make ~load in
     if deepen = None then begin
       let fn (_, hex) =
-        match Git_object.uid_of_hex hex with
+        match Mgit_object.uid_of_hex hex with
         | Ok uid when load uid <> None -> Negotiator.known_common negotiator uid
         | _ -> () in
       List.iter fn refs.Smart.refs
@@ -120,12 +156,12 @@ module Make (Flow : Git_flow.S) = struct
 
   let want t store refs =
     match List.assoc_opt (store.branch t) refs.Smart.refs with
-    | Some hex -> Ok (store.branch t, Git_object.uid_of_hex_exn hex)
+    | Some hex -> Ok (store.branch t, Mgit_object.uid_of_hex_exn hex)
     | None ->
         begin match (store.is_empty t, refs.Smart.head_symref) with
         | true, Some name ->
             begin match List.assoc_opt name refs.Smart.refs with
-            | Some hex -> Ok (name, Git_object.uid_of_hex_exn hex)
+            | Some hex -> Ok (name, Mgit_object.uid_of_hex_exn hex)
             | None -> error_msgf "%s does not exist on the remote" name
             end
         | _ -> error_msgf "%s does not exist on the remote" (store.branch t)
@@ -151,7 +187,7 @@ module Make (Flow : Git_flow.S) = struct
        | Smart.V1 { capabilities; _ } ->
            Find_common.fetch_v1 ~stateless ~thin:true ~capabilities ~negotiator
              ~shallows ?deepen [ want ] q ctx in
-     let result = Run.run flow (reword fetch) in
+     let result = run flow (reword fetch) in
      Flux.Bqueue.close q;
      Miou.await_exn consumer;
      begin match result with
@@ -166,22 +202,22 @@ module Make (Flow : Git_flow.S) = struct
   type 'tmp located = { kind : Carton.Kind.t; length : int; meta : 'tmp Carton.t * int }
 
   let extern t store =
-    let cache = Hashtbl.create 0x10 in
+    let cache = Hashtbl.create 0x10 and mutex = Mutex.create () in
     fun (uid : uid) ->
-      match Hashtbl.find_opt cache (uid :> string) with
+      match Mutex.protect mutex (fun () -> Hashtbl.find_opt cache (uid :> string)) with
       | Some value -> value
       | None ->
           let fn (kind, payload) = (kind, Bstr.of_string payload) in
           let value = Option.map fn (store.read t uid) in
-          Hashtbl.replace cache (uid :> string) value;
+          Mutex.protect mutex (fun () -> Hashtbl.replace cache (uid :> string) value);
           value
 
   let analyse ~extern seq carton =
      let src = Flux.Source.seq seq in
      let via = Carton_miou_flux.first_pass
-       ~digest:(Git_object.digest_pack ())
-       ~ref_length:Git_object.ref_length in
-     let into = Carton_miou_flux.oracle ~identify:Git_object.identify in 
+       ~digest:(Mgit_object.digest_pack ())
+       ~ref_length:Mgit_object.ref_length in
+     let into = Carton_miou_flux.oracle ~identify:Mgit_object.identify in 
      let oracle =
        Flux.Stream.from src 
        |> Flux.Stream.via via
@@ -193,7 +229,8 @@ module Make (Flow : Git_flow.S) = struct
          ; length= Carton.Value.length value
          ; meta= carton, cursor } in
        Hashtbl.replace tbl (uid : Carton.Uid.t :> string) located in
-     let src = Carton_miou_flux.entries ~threads:0 ~extern carton oracle in
+     let threads = Int.min 4 (Miou.Domain.available ()) in
+     let src = Carton_miou_flux.entries ~threads ~extern carton oracle in
      match Flux.Source.each fn src with
      | exception Failure msg -> Error (`Msg msg)
      | () ->
@@ -210,8 +247,8 @@ module Make (Flow : Git_flow.S) = struct
        't
     -> branch:string
     -> lookup:(uid -> 'tmp located option)
-    -> reader:Change.read
-    -> news:Change.news
+    -> reader:Mgit_change.read
+    -> news:Mgit_change.news
     -> uid
     -> (unit, 'err) result
 
@@ -232,7 +269,7 @@ module Make (Flow : Git_flow.S) = struct
     | `Git ->
         let host = edn.Endpoint.host and path = edn.Endpoint.path in
         let request = Smart.proto_request ~version ~service ~host path ctx in
-        begin match Run.run flow (reword request) with
+        begin match run flow (reword request) with
         | Ok () -> Ok (flow, ctx)
         | Error _ as err -> Flow.close flow; err
         end
@@ -242,15 +279,15 @@ module Make (Flow : Git_flow.S) = struct
     | Some { ctx= remote_ctx; edn } ->
         let* flow, ctx = connect remote_ctx edn ~service:"git-upload-pack" ~version:2 in
         Fun.protect ~finally:(fun () -> Flow.close flow) @@ fun () ->
-        let* advertisement = Run.run flow (reword (Smart.advertisement ctx)) in
+        let* advertisement = run flow (reword (Smart.advertisement ctx)) in
         let* refs =
           match advertisement with
           | Smart.V1 { refs; _ } -> Ok refs
-          | Smart.V2 _ -> Run.run flow (reword (Smart.ls_refs ctx)) in
+          | Smart.V2 _ -> run flow (reword (Smart.ls_refs ctx)) in
         let* name, want = want t store refs in
         if Some want = store.head t then begin
           if not (is_stateless edn)
-          then ignore (Run.run flow (reword (Protocol.encode_flush_pkt ctx)));
+          then ignore (run flow (reword (Protocol.encode_flush_pkt ctx)));
           Ok []
         end
         else begin
@@ -276,7 +313,7 @@ module Make (Flow : Git_flow.S) = struct
                   let bstr = Carton.Value.bigstring value in
                   Some (Carton.Value.kind value, Bstr.sub_string bstr ~off:0 ~len)
             in
-            let news = Change.make () in
+            let news = Mgit_change.make () in
             (* NOTE(dinosaure): save it. *)
             let* () = generation t ~branch:name ~lookup ~reader ~news want in
             let after = paths t store in
@@ -292,13 +329,13 @@ module Make (Flow : Git_flow.S) = struct
         | Some new_uid ->
             let* flow, ctx = connect remote_ctx edn ~service:"git-receive-pack" ~version:1 in
             Fun.protect ~finally:(fun () -> Flow.close flow) @@ fun () ->
-            let* advertisement = Run.run flow (reword (Smart.advertisement ctx)) in
+            let* advertisement = run flow (reword (Smart.advertisement ctx)) in
             begin match advertisement with
             | Smart.V2 _ -> error_msgf "Unexpected protocol v2 from git-receive-pack"
             | Smart.V1 { refs; capabilities } ->
                 let name = store.branch t in
                 let old_uid =
-                  Option.map Git_object.uid_of_hex_exn
+                  Option.map Mgit_object.uid_of_hex_exn
                     (List.assoc_opt name refs.Smart.refs) in
                 let fast_forward =
                   match old_uid with
@@ -310,7 +347,7 @@ module Make (Flow : Git_flow.S) = struct
                               (non-fast-forward), pull first" name
                 else
                   let* uids =
-                    Closure.uncommon ~read:(store.read t)
+                    Mgit_closure.uncommon ~read:(store.read t)
                       ~exclude:(Option.to_list old_uid) new_uid in
                   Log.debug (fun m -> m "push %d object(s)" (List.length uids));
                   let* seq = pack uids in
@@ -328,7 +365,7 @@ module Make (Flow : Git_flow.S) = struct
                       let* report = Smart.report_status ctx in
                       Protocol.return (Some report)
                     else Protocol.return None in
-                  let* report = Run.run flow (reword exchange) in
+                  let* report = run flow (reword exchange) in
                   match report with
                   | None -> Ok ()
                   | Some report ->

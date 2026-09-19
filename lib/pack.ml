@@ -9,9 +9,9 @@ let be32 v =
   Bytes.unsafe_to_string buf
 
 let buffers () =
-  let o = Bstr.create 0x1000
-  and i = Bstr.create 0x1000
-  and q = De.Queue.create 0x1000
+  let o = Bstr.create 0x7ff
+  and i = Bstr.create 0x7ff
+  and q = De.Queue.create 0x10_000
   and w = De.Lz77.make_window ~bits:15 in
   { Cartonnage.o; i; q; w }
 

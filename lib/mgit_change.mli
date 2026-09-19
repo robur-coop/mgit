@@ -1,7 +1,7 @@
 type read = Carton.Uid.t -> (Carton.Kind.t * string) option
 type news
 type error = [ `Msg of string ]
-type t = string list * [ `Set of Git_object.Tree.perm * string | `Rem ]
+type t = string list * [ `Set of Mgit_object.Tree.perm * string | `Rem ]
 
 val make : unit -> news
 val find : news -> Carton.Uid.t -> (Carton.Kind.t * string) option

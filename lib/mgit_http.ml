@@ -11,6 +11,8 @@ module type CLIENT = sig
     -> (unit, [> `Msg of string ]) result
 end
 
+module Endpoint = Mgit_sync.Endpoint
+
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let inhibit fn = try fn () with _exn -> ()
 

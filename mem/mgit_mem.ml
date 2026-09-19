@@ -1,14 +1,16 @@
+module Object = Mgit_object
+
 type t =
-  { mutable objects : (string, Carton.Kind.t * string) Hashtbl.t
-  ; mutable references : (string * Carton.Uid.t) list
-  ; mutable prerequisites : (Carton.Uid.t * string option) list
+  { objects : (string, Carton.Kind.t * string) Hashtbl.t
+  ; references : (string * Carton.Uid.t) list
+  ; prerequisites : (Carton.Uid.t * string option) list
   ; tmp : Buffer.t }
 
 let make () =
-  { objects= Hashtbl.create 0x100
+  { objects= Hashtbl.create 0x7ff
   ; references= []
   ; prerequisites= []
-  ; tmp= Buffer.create 0x1000 }
+  ; tmp= Buffer.create 0x7ff }
 
 let references t = t.references
 let prerequisites t = t.prerequisites
@@ -19,19 +21,20 @@ let kind t uid = Option.map fst (read t uid)
 let length t uid = Option.map (fun (_, payload) -> String.length payload) (read t uid)
 
 let value t uid =
-  Option.map (fun (kind, payload) -> Carton.Value.of_string ~kind payload) (read t uid)
+  let fn (kind, payload) = Carton.Value.of_string ~kind payload in
+  Option.map fn (read t uid)
 
 let uids t =
-  List.of_seq (Seq.map Carton.Uid.unsafe_of_string (Hashtbl.to_seq_keys t.objects))
+  Hashtbl.to_seq_keys t.objects
+  |> Seq.map Carton.Uid.unsafe_of_string
+  |> List.of_seq
 
 let publish t ~references ~prerequisites objects =
   let tbl = Hashtbl.create (List.length objects) in
   let fn ((uid : Carton.Uid.t), kind, payload) =
     Hashtbl.replace tbl (uid :> string) (kind, payload) in
   List.iter fn objects;
-  t.objects <- tbl;
-  t.references <- references;
-  t.prerequisites <- prerequisites
+  { t with objects= tbl; references; prerequisites }
 
 module Tmp = struct
   type extern = Carton.Uid.t -> (Carton.Kind.t * Bstr.t) option
@@ -45,7 +48,7 @@ module Tmp = struct
     let rec go off () =
       if off >= len then Seq.Nil
       else
-        let n = Int.min 0x1000 (len - off) in
+        let n = Int.min 0x7ff (len - off) in
         Seq.Cons (Buffer.sub t.tmp off n, go (off + n)) in
     go 0
 
@@ -60,7 +63,7 @@ module Tmp = struct
       match extern uid with
       | Some (kind, bstr) -> Carton.Extern (kind, bstr)
       | None -> raise Not_found in
-    Carton.make ~map bstr ~z:(Bstr.create 0x1000)
+    Carton.make ~map bstr ~z:(Bstr.create 0x7ff)
       ~allocate:(fun bits -> De.make_window ~bits)
-      ~ref_length:Git_object.ref_length index
+      ~ref_length:Object.ref_length index
 end

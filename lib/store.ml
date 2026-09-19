@@ -5,18 +5,18 @@ module SHA1 = Digestif.SHA1
 
 type error =
   [ `Msg of string
-  | `Zone_full
+  | `Out_of_space
   | `Not_found of Carton.Uid.t ]
 
 let pp_error ppf = function
   | `Msg msg -> Fmt.string ppf msg
-  | `Zone_full -> Fmt.string ppf "Zone of the block-device full"
-  | `Not_found uid -> Fmt.pf ppf "%a not found" Git_object.pp_uid uid
+  | `Out_of_space -> Fmt.string ppf "Zone of the block-device full"
+  | `Not_found uid -> Fmt.pf ppf "%a not found" Mgit_object.pp_uid uid
 
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
-let ref_length = Git_object.ref_length
+let ref_length = Mgit_object.ref_length
 
-exception Out_of_space = Blk.Append.Out_of_space
+exception Out_of_space = Mgit_blk.Append.Out_of_space
 
 type metadata =
   { hdr_len : int
@@ -43,16 +43,20 @@ let wr m bstr =
   set 4 m.idx_len;
   5 * 8
 
-module Make (Block : Blk.BLOCK) = struct
-  module Blk = Blk.Make (Block)
+module Make (Block : Mgit_blk.BLOCK) = struct
+  module Blk = Mgit_blk.Make (Block)
 
   type fd = metadata Blk.t
+
+  type reader = { idx : fd Classeur.t option; carton : fd Carton.t option }
 
   type t =
     { blk : metadata Blk.t
     ; header : Bundle.t option
-    ; idx : fd Classeur.t option
-    ; carton : fd Carton.t option }
+    ; reader : reader
+    ; pool : reader list Atomic.t
+    ; readers : int Atomic.t
+    ; previous : int Atomic.t option }
 
   let allocate bits = De.make_window ~bits
 
@@ -76,25 +80,51 @@ module Make (Block : Blk.BLOCK) = struct
         (Classeur.of_cachet ~length:m.idx_len ~hash_length:SHA1.digest_size
            ~ref_length cache)
 
+  let index_of idx (uid : Carton.Uid.t) =
+    match idx with
+    | None -> raise Not_found
+    | Some idx ->
+        let uid = Classeur.unsafe_uid_of_string (uid :> string) in
+        Carton.Local (Classeur.find_offset idx uid)
+
   let carton_of blk idx =
     let m = Blk.metadata blk in
     if m.pack_len = 0 then None
     else
       let cache = Blk.cachet blk `Active ~base:m.pack_off ~len:m.pack_len in
       let z = Bstr.create 0x1000 in
-      let index (uid : Carton.Uid.t) =
-        match idx with
-        | None -> raise Not_found
-        | Some idx ->
-            let uid = Classeur.unsafe_uid_of_string (uid :> string) in
-            Carton.Local (Classeur.find_offset idx uid) in
-      Some (Carton.of_cache cache ~z ~allocate ~ref_length index)
+      Some (Carton.of_cache cache ~z ~allocate ~ref_length (index_of idx))
 
-  let reload blk =
+  let reload ?previous blk =
     let header = header_of blk in
     let idx = idx_of blk in
     let carton = carton_of blk idx in
-    { blk; header; idx; carton }
+    { blk; header; reader= { idx; carton }; pool= Atomic.make []
+    ; readers= Atomic.make 0; previous }
+
+  let copy { idx; carton } =
+    let idx = Option.map Classeur.copy idx in
+    let fn carton = Carton.with_index (Carton.copy carton) (index_of idx) in
+    let carton = Option.map fn carton in
+    { idx; carton }
+
+  let rec take t =
+    match Atomic.get t.pool with
+    | [] -> copy t.reader
+    | reader :: rest as old ->
+        if Atomic.compare_and_set t.pool old rest then reader else take t
+
+  let rec give t reader =
+    let old = Atomic.get t.pool in
+    if not (Atomic.compare_and_set t.pool old (reader :: old)) then give t reader
+
+  let with_reader t fn =
+    let reader = take t in
+    let finally () = give t reader in
+    Fun.protect ~finally @@ fun () -> fn reader
+
+  let acquire t = Atomic.incr t.readers
+  let release t = Atomic.decr t.readers
 
   let format ?ratio ?length blk =
     match Blk.format ?ratio ~rd ~wr ?length blk with
@@ -120,20 +150,22 @@ module Make (Block : Blk.BLOCK) = struct
     Classeur.unsafe_uid_of_string (uid :> string)
 
   let exists t uid =
-    match t.idx with
+    with_reader t @@ fun r ->
+    match r.idx with
     | None -> false
     | Some idx -> Classeur.exists idx (classeur_uid uid)
 
   let uids t =
-    match t.idx with
+    with_reader t @@ fun r ->
+    match r.idx with
     | None -> []
     | Some idx ->
         let fn ~(uid : Classeur.uid) ~crc:_ ~offset:_ =
           Carton.Uid.unsafe_of_string (uid :> string) in
         Classeur.map ~fn idx
 
-  let cursor t uid =
-    match t.idx with
+  let cursor r uid =
+    match r.idx with
     | None -> None
     | Some idx ->
         begin match Classeur.find_offset idx (classeur_uid uid) with
@@ -142,12 +174,14 @@ module Make (Block : Blk.BLOCK) = struct
         end
 
   let kind t uid =
-    match (t.carton, cursor t uid) with
+    with_reader t @@ fun r ->
+    match (r.carton, cursor r uid) with
     | Some carton, Some cursor -> Some (Carton.kind_of_offset carton ~cursor)
     | _ -> None
 
   let value t uid =
-    match (t.carton, cursor t uid) with
+    with_reader t @@ fun r ->
+    match (r.carton, cursor r uid) with
     | Some carton, Some cursor ->
         let size = Carton.size_of_offset carton ~cursor Carton.Size.zero in
         let blob = Carton.Blob.make ~size in
@@ -168,6 +202,12 @@ module Make (Block : Blk.BLOCK) = struct
     match Bundle.check hdr with
     | Error (`Msg _) as err -> err
     | Ok () ->
+        (* NOTE(dinosaure): we are about to write over the zone of the
+           previous generation: we wait until nobody reads it anymore.
+           It's a simple spin-lock. *)
+        let rec wait counter =
+          if Atomic.get counter > 0 then (Miou.yield (); wait counter) in
+        Option.iter wait t.previous;
         let hdr = Bundle.to_string hdr in
         let app = Blk.append t.blk `Inactive in
         let zone_off, _ = Blk.bounds t.blk `Inactive in
@@ -198,8 +238,8 @@ module Make (Block : Blk.BLOCK) = struct
                 m' "publish: hdr:%d pack:[%d;%d] idx:[%d;%d]" m.hdr_len
                   m.pack_off m.pack_len m.idx_off m.idx_len);
             let blk = Blk.commit (Blk.with_metadata t.blk m) in
-            Ok (reload blk)
-          with Out_of_space -> Error `Zone_full
+            Ok (reload ~previous:t.readers blk)
+          with Out_of_space -> Error `Out_of_space
         end
 
   let to_bundle t =
