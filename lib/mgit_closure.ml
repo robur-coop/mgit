@@ -5,7 +5,7 @@ let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 exception Missing of Carton.Uid.t
 exception Not_a_commit of Carton.Uid.t
 
-let commits ~read ~depth root =
+let commits ~read ~depth roots =
   let seen = Hashtbl.create 0x10 in
   let kept = ref [] and boundary = ref [] in
   let visited uid =
@@ -26,7 +26,7 @@ let commits ~read ~depth root =
             go (rest @ parents)
         | Some _ -> raise (Not_a_commit uid)
         end in
-  go [ (root, 1) ];
+  go (List.map (fun root -> (root, 1)) roots);
   (List.rev !kept, List.rev !boundary)
 
 let objects ~read commits =
@@ -63,9 +63,9 @@ let objects ~read commits =
   List.iter (fun uid -> go [ uid ]) roots;
   (List.rev !trees, List.rev !blobs)
 
-let closure ~read ~depth root =
+let closure ~read ~depth roots =
   match
-    let kept, boundary = commits ~read ~depth root in
+    let kept, boundary = commits ~read ~depth roots in
     let trees, blobs = objects ~read kept in
     (kept @ trees @ blobs, boundary)
   with
@@ -75,22 +75,23 @@ let closure ~read ~depth root =
   | exception Not_a_commit uid ->
       error_msgf "%a is not the expected kind of object" Mgit_object.pp_uid uid
 
-let uncommon ~read ~exclude root =
+let uncommon ~read ~exclude roots =
   match
-    let everything uid =
-      let kept, _ = commits ~read ~depth:max_int uid in
+    let everything roots =
+      let kept, _ = commits ~read ~depth:max_int roots in
       let trees, blobs = objects ~read kept in
       kept @ trees @ blobs in
     let known = Hashtbl.create 0x100 in
     let fn uid =
-      if Option.is_some (read uid)
-      then
-        List.iter
-          (fun uid -> Hashtbl.replace known (uid : Carton.Uid.t :> string) ())
-          (everything uid) in
+      match read uid with
+      | Some (`A, _) ->
+          List.iter
+            (fun uid -> Hashtbl.replace known (uid : Carton.Uid.t :> string) ())
+            (everything [ uid ])
+      | _ -> () in
     List.iter fn exclude;
     let unknown uid = not (Hashtbl.mem known (uid : Carton.Uid.t :> string)) in
-    List.filter unknown (everything root)
+    List.filter unknown (everything roots)
   with
   | value -> Ok value
   | exception Missing uid ->
