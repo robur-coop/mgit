@@ -1,5 +1,5 @@
 (library
  (name mgit_unix)
  (public_name mgit.unix)
- (libraries bstr fmt h1 httpcats mgit mgit.blk miou.unix unix x509)
- (modules block_unix flow_unix))
+ (libraries bstr fmt h1 httpcats mgit mgit.blk mgit.http miou.unix unix x509)
+ (modules mgit_unix block flow))

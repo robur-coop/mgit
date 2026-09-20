@@ -1,5 +1,6 @@
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let ( let* ) = Result.bind
+let inhibit fn value = try fn value with _exn -> ()
 
 type ctx =
   { ssh : string
@@ -17,6 +18,11 @@ let resolve host port =
   | exception Unix.Unix_error (err, _, _) ->
       error_msgf "%s: %s" host (Unix.error_message err)
 
+let owned ~finally value =
+  let resource = Miou.Ownership.create ~finally value in
+  Miou.Ownership.own resource;
+  resource
+
 let socket = function
   | Unix.ADDR_INET (inet, _) when Unix.is_inet6_addr inet -> Miou_unix.tcpv6 ()
   | _ -> Miou_unix.tcpv4 ()
@@ -25,10 +31,13 @@ let rec attempt = function
   | [] -> error_msgf "Connection refused"
   | sockaddr :: rest ->
       let fd = socket sockaddr in
+      let finally fd = inhibit Unix.close (Miou_unix.to_file_descr fd) in
+      let resource = owned ~finally fd in
       begin match Miou_unix.connect fd sockaddr with
-      | () -> Ok fd
+      | () -> Ok (fd, resource)
       | exception Unix.Unix_error (err, _, _) ->
           Miou_unix.close fd;
+          Miou.Ownership.disown resource;
           begin match rest with
           | [] -> error_msgf "Connection failed: %s" (Unix.error_message err)
           | rest -> attempt rest
@@ -51,6 +60,14 @@ let quote str =
   Buffer.add_char buf '\'';
   Buffer.contents buf
 
+(* The process is killed (and reaped) if the task which spawned it ends
+   abnormally. *)
+let abort { pid; stdin; stdout } =
+  inhibit Unix.close (Miou_unix.to_file_descr stdin);
+  inhibit Unix.close (Miou_unix.to_file_descr stdout);
+  inhibit (fun () -> Unix.kill pid Sys.sigkill ) ();
+  inhibit (fun () -> ignore (Unix.waitpid [] pid)) ()
+
 let spawn prog args env =
   let in_r, in_w = Unix.pipe ~cloexec:true () in
   let out_r, out_w = Unix.pipe ~cloexec:true () in
@@ -61,21 +78,22 @@ let spawn prog args env =
   | pid ->
       Unix.close in_r;
       Unix.close out_w;
-      Ok
+      let process =
         { pid
         ; stdin= Miou_unix.of_file_descr ~non_blocking:true in_w
-        ; stdout= Miou_unix.of_file_descr ~non_blocking:true out_r }
+        ; stdout= Miou_unix.of_file_descr ~non_blocking:true out_r } in
+      Ok (process, owned ~finally:abort process)
   | exception Unix.Unix_error (err, _, _) ->
       List.iter Unix.close [ in_r; in_w; out_r; out_w ];
       error_msgf "%s: %s" prog (Unix.error_message err)
 
 let ssh ctx edn ~service ~version =
   let host =
-    match edn.Mgit.Endpoint.user with
-    | Some user -> user ^ "@" ^ edn.Mgit.Endpoint.host
-    | None -> edn.Mgit.Endpoint.host in
+    match edn.Mgit_sync.Endpoint.user with
+    | Some user -> user ^ "@" ^ edn.Mgit_sync.Endpoint.host
+    | None -> edn.Mgit_sync.Endpoint.host in
   let port =
-    match edn.Mgit.Endpoint.port with
+    match edn.Mgit_sync.Endpoint.port with
     | Some port -> [ "-p"; string_of_int port ]
     | None -> [] in
   (* NOTE(dinosaure): the version of the protocol is given to the remote as
@@ -86,7 +104,7 @@ let ssh ctx edn ~service ~version =
       ( Array.append (Unix.environment ()) [| Fmt.str "GIT_PROTOCOL=version=%d" version |]
       , [ "-o"; "SendEnv=GIT_PROTOCOL" ] )
     else (Unix.environment (), []) in
-  let command = Fmt.str "%s %s" service (quote edn.Mgit.Endpoint.path) in
+  let command = Fmt.str "%s %s" service (quote edn.Mgit_sync.Endpoint.path) in
   spawn ctx.ssh (send_env @ port @ [ host; command ]) env
 
 (* HTTP *)
@@ -110,25 +128,27 @@ module Client = struct
     | Error err -> error_msgf "%s: %a" uri Httpcats.pp_error err
 end
 
-module Http = Mgit.Git_http.Make (Client)
+module Http = Mgit_http.Make (Client)
 
 (* Git_flow *)
 
-type t = Tcp of Miou_unix.file_descr | Ssh of process | Http of Http.t
+type flow = Tcp of Miou_unix.file_descr | Ssh of process | Http of Http.t
+type t = { flow : flow; resource : Miou.Ownership.t }
 
 let connect ctx edn ~service ~version =
-  match edn.Mgit.Endpoint.scheme with
+  match edn.Mgit_sync.Endpoint.scheme with
   | `Git ->
-      let host = edn.Mgit.Endpoint.host and port = Mgit.Endpoint.port edn in
+      let host = edn.Mgit_sync.Endpoint.host
+      and port = Mgit_sync.Endpoint.port edn in
       let* targets = resolve host port in
-      let* fd = attempt targets in
-      Ok (Tcp fd)
+      let* fd, resource = attempt targets in
+      Ok { flow= Tcp fd; resource }
   | `SSH ->
-      let* process = ssh ctx edn ~service ~version in
-      Ok (Ssh process)
+      let* process, resource = ssh ctx edn ~service ~version in
+      Ok { flow= Ssh process; resource }
   | `HTTP | `HTTPS ->
       let* http = Http.connect ctx edn ~service ~version in
-      Ok (Http http)
+      Ok { flow= Http http; resource= owned ~finally:Http.abort http }
 
 let read fd buf ~off ~len =
   match Miou_unix.read fd ~off ~len buf with
@@ -144,23 +164,26 @@ let write fd str ~off ~len =
       error_msgf "send: %s" (Unix.error_message err)
 
 let recv t buf ~off ~len =
-  match t with
+  match t.flow with
   | Tcp fd -> read fd buf ~off ~len
   | Ssh { stdout; _ } -> read stdout buf ~off ~len
   | Http http -> Http.recv http buf ~off ~len
 
 let send t str ~off ~len =
-  match t with
+  match t.flow with
   | Tcp fd -> write fd str ~off ~len
   | Ssh { stdin; _ } -> write stdin str ~off ~len
   | Http http -> Http.send http str ~off ~len
 
 let close_fd fd = try Miou_unix.close fd with Unix.Unix_error _ -> ()
 
-let close = function
+let close t =
+  begin match t.flow with
   | Tcp fd -> close_fd fd
   | Ssh { pid; stdin; stdout } ->
       close_fd stdin;
       close_fd stdout;
       (try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
   | Http http -> Http.close http
+  end;
+  Miou.Ownership.disown t.resource

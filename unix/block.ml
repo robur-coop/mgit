@@ -1,6 +1,6 @@
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 
-type t = { fd : Unix.file_descr; sector_size : int; length : int }
+type t = { fd : Unix.file_descr; sector_size : int; length : int; mutex : Mutex.t }
 
 let sector_size { sector_size; _ } = sector_size
 let length { length; _ } = length
@@ -28,7 +28,7 @@ let atomic_read t ~src_off ?(dst_off = 0) bstr =
   if src_off land (t.sector_size - 1) <> 0
   then Fmt.invalid_arg "Block_unix.atomic_read: unaligned offset (%d)" src_off;
   let buf = Bytes.create t.sector_size in
-  pread t.fd buf ~off:src_off;
+  Mutex.protect t.mutex (fun () -> pread t.fd buf ~off:src_off);
   Bstr.blit_from_bytes buf ~src_off:0 bstr ~dst_off ~len:t.sector_size
 
 let atomic_write t ?(src_off = 0) ~dst_off bstr =
@@ -36,12 +36,12 @@ let atomic_write t ?(src_off = 0) ~dst_off bstr =
   then Fmt.invalid_arg "Block_unix.atomic_write: unaligned offset (%d)" dst_off;
   let buf = Bytes.create t.sector_size in
   Bstr.blit_to_bytes bstr ~src_off buf ~dst_off:0 ~len:t.sector_size;
-  pwrite t.fd buf ~off:dst_off
+  Mutex.protect t.mutex (fun () -> pwrite t.fd buf ~off:dst_off)
 
 let of_fd ~sector_size fd =
   let stat = Unix.fstat fd in
   let length = stat.Unix.st_size land lnot (sector_size - 1) in
-  { fd; sector_size; length }
+  { fd; sector_size; length; mutex= Mutex.create () }
 
 let check_sector_size sector_size =
   if sector_size <= 0 || sector_size land (sector_size - 1) <> 0
