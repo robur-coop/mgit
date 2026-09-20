@@ -1,16 +1,35 @@
 (library
  (name mgit)
  (public_name mgit)
- (libraries
-  bstr
-  carton
-  carton.cartonnage
-  carton.classeur
-  checkseum
-  decompress.de
-  digestif
-  flux
-  fmt
-  logs
-  ohex
-  optint))
+ (modules mgit delta pack store)
+ (libraries mgit.mem carton.bundle mgit.blk mgit.sync))
+
+(library
+ (name mgit_object)
+ (public_name mgit.object)
+ (modules mgit_object)
+ (libraries digestif fmt carton))
+
+(library
+ (name mgit_change)
+ (public_name mgit.change)
+ (modules mgit_change)
+ (libraries mgit.object carton))
+
+(library
+ (name mgit_closure)
+ (public_name mgit.closure)
+ (modules mgit_closure)
+ (libraries mgit.object carton))
+
+(library
+ (name mgit_sync)
+ (public_name mgit.sync)
+ (modules mgit_sync find_common negotiator endpoint protocol smart)
+ (libraries carton-miou.flux mgit.closure mgit.change mgit.object flux carton logs fmt))
+
+(library
+ (name mgit_http)
+ (public_name mgit.http)
+ (modules mgit_http)
+ (libraries mgit.sync))
