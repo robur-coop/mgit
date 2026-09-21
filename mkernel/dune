@@ -1,0 +1,15 @@
+(library
+ (name mgit_mkernel)
+ (public_name mgit-mkernel)
+ (libraries
+  awa
+  fmt
+  h1
+  mgit
+  mgit.http
+  mhttp-client
+  mkernel
+  mnet
+  mnet-happy-eyeballs
+  mnet-ssh
+  x509))
