@@ -1,0 +1,17 @@
+(library
+ (name mgit_cli)
+ (modules mgit_cli)
+ (public_name mgit.cli)
+ (libraries fpath logs.fmt logs.cli fmt.cli fmt.tty cmdliner))
+
+(library
+ (name mgit_create)
+ (modules mgit_create)
+ (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
+(executable
+ (name main)
+ (modules main)
+ (package mgit)
+ (public_name mgit)
+ (libraries mgit mgit_create mgit.cli))
