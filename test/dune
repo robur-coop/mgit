@@ -1,0 +1,10 @@
+(executable
+ (name obj)
+ (public_name mgit.obj)
+ (package mgit)
+ (libraries mgit))
+
+(cram
+ (package mgit)
+ (applies_to object)
+ (deps %{bin:mgit.obj}))
