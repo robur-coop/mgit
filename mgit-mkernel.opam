@@ -1,0 +1,29 @@
+opam-version: "2.0"
+maintainer: "Robur Team <team@robur.coop>"
+authors: [ "Robur Team <team@robur.coop>" ]
+license: "AGPL-3.0-or-later"
+homepage: "https://github.com/robur-coop/mgit"
+dev-repo: "git+https://github.com/robur-coop/mgit"
+bug-reports: "https://github.com/robur-coop/mgit/issues"
+synopsis: "Git for unikernels"
+
+depends: [
+  "ocaml" {>= "5.0.0"}
+  "dune" {>= "3.0.0"}
+  "mgit" {= version}
+  "fmt"
+  "mkernel"
+  "mnet"
+  "mnet-happy-eyeballs"
+  "mnet-ssh"
+  "mhttp-client"
+  "awa"
+  "h1"
+  "x509"
+]
+
+build: [
+  ["dune" "subst"] {dev}
+  ["dune" "build" "-p" name "-j" jobs]
+]
+x-maintenance-intent: [ "(latest)" ]

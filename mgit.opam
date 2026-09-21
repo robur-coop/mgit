@@ -1,21 +1,44 @@
 opam-version: "2.0"
 maintainer: "Robur Team <team@robur.coop>"
 authors: [ "Robur Team <team@robur.coop>" ]
-license: "MIT"
+license: "AGPL-3.0-or-later"
 homepage: "https://github.com/robur-coop/mgit"
 dev-repo: "git+https://github.com/robur-coop/mgit"
 bug-reports: "https://github.com/robur-coop/mgit/issues"
-synopsis: "Git for unikernels"
+synopsis: "Git in OCaml"
 
 depends: [
   "ocaml" {>= "4.12.0"}
   "dune" {>= "3.0.0"}
   "alcotest" {with-test}
+  "bstr"
+  "cachet" {>= "0.0.4"}
+  "carton" {>= "1.3.0"}
+  "carton-miou" {>= "1.3.0"}
+  "checkseum"
+  "decompress" {>= "1.6.0"}
+  "digestif" {>= "1.3.0"}
+  "flux"
+  "fmt"
+  "logs"
+  "miou"
+  "ohex"
+  "optint"
+  "httpcats"
+  "h1"
+  "x509"
+  "mirage-crypto-rng"
+  "conf-git" {with-test}
 ]
 
 build: [
   ["dune" "subst"] {dev}
   ["dune" "build" "-p" name "-j" jobs]
-  ["dune" "runtest" "-p" name "-j" jobs] 
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
 ]
 x-maintenance-intent: [ "(latest)" ]
+pin-depends: [
+  [ "carton.dev" "git+https://github.com/robur-coop/carton.git#d6d7b3fce9afe3bb2a6913e9ed1a59276d32882e" ]
+  [ "carton-miou.dev" "git+https://github.com/robur-coop/carton.git#d6d7b3fce9afe3bb2a6913e9ed1a59276d32882e" ]
+  [ "flux.dev" "git+https://github.com/robur-coop/flux.git#57b0fd066542d341f3d4f7717a37119c7f3eb63a" ]
+]
