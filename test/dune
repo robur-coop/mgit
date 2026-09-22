@@ -1,8 +1,19 @@
 (executable
  (name obj)
+ (modules obj)
  (public_name mgit.obj)
  (package mgit)
  (libraries mgit))
+
+(library
+ (name test)
+ (modules test)
+ (libraries unix))
+
+(test
+ (name g)
+ (modules g)
+ (libraries mgit.unix test))
 
 (cram
  (package mgit)
