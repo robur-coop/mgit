@@ -255,6 +255,10 @@ module Make (Block : BLOCK) = struct
               ; wr; rd
               ; metadata
               ; blk } in
-      write blk t; Ok t
+      let bstr = Bstr.create sector_size in
+      store t bstr;
+      Block.atomic_write blk ~dst_off:0 bstr;
+      Block.atomic_write blk ~dst_off:sector_size bstr;
+      Ok t
     end
 end

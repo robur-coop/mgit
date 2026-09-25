@@ -2,11 +2,41 @@
  (name mgit_cli)
  (modules mgit_cli)
  (public_name mgit.cli)
- (libraries fpath logs.fmt logs.cli fmt.cli fmt.tty cmdliner))
+ (libraries hxd.core mgit.unix fpath logs.fmt logs.cli fmt.cli fmt.tty cmdliner))
 
 (library
  (name mgit_create)
  (modules mgit_create)
+ (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
+(library
+ (name mgit_set)
+ (modules mgit_set)
+ (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
+(library
+ (name mgit_get)
+ (modules mgit_get)
+ (libraries hxd.string mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
+(library
+ (name mgit_head)
+ (modules mgit_head)
+ (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
+(library
+ (name mgit_list)
+ (modules mgit_list)
+ (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
+(library
+ (name mgit_bundle)
+ (modules mgit_bundle)
+ (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
+(library
+ (name mgit_gc)
+ (modules mgit_gc)
  (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
 
 (executable
@@ -14,4 +44,13 @@
  (modules main)
  (package mgit)
  (public_name mgit)
- (libraries mgit mgit_create mgit.cli))
+ (libraries
+  mgit
+  mgit_create
+  mgit_set
+  mgit_get
+  mgit_head
+  mgit_list
+  mgit_bundle
+  mgit_gc
+  mgit.cli))

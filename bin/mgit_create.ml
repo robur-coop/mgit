@@ -7,7 +7,7 @@ let msgf fmt = Fmt.kstr (fun msg -> `Msg msg) fmt
 let run _quiet (size, _) filename =
   Miou_unix.run ~domains:0 @@ fun () ->
   Mirage_crypto_rng_unix.use_default ();
-  let* blk = Block.create filename size in
+  let* blk = Block.create (Fpath.to_string filename) size in
   Git.format blk
 
 open Cmdliner

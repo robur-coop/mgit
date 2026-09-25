@@ -19,3 +19,8 @@
  (package mgit)
  (applies_to object)
  (deps %{bin:mgit.obj}))
+
+(cram
+ (package mgit)
+ (applies_to bundle)
+ (deps %{bin:mgit}))
