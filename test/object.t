@@ -44,7 +44,8 @@ We need to include \n...
   $ mgit.obj commit-tree $TREE -m "first
   > " > got
   $ diff expected got
-  $ diff expected <(git rev-parse HEAD)
+  $ git rev-parse HEAD > got
+  $ diff expected got
   $ echo "bar" > foo
   $ git add foo
   $ git commit -q -m "second"
