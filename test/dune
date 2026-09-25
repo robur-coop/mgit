@@ -24,3 +24,8 @@
  (package mgit)
  (applies_to bundle)
  (deps %{bin:mgit}))
+
+(cram
+ (package mgit)
+ (applies_to mem)
+ (deps %{bin:mgit} add.ml))

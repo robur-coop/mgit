@@ -39,6 +39,11 @@
  (modules mgit_gc)
  (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
 
+(library
+ (name mgit_repl)
+ (modules mgit_repl)
+ (libraries mirage-crypto-rng.unix miou.unix mgit.unix mgit.cli))
+
 (executable
  (name main)
  (modules main)
@@ -53,4 +58,5 @@
   mgit_list
   mgit_bundle
   mgit_gc
+  mgit_repl
   mgit.cli))
