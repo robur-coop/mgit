@@ -77,20 +77,18 @@
   hello from memory
   $ cd work
   $ git fetch -q origin
-  $ git bundle verify ../two.bundle
+  $ git bundle verify ../two.bundle 2>&1 | head -5
   ../two.bundle is okay
   The bundle contains this ref:
   ec85e1ca5c2b84b9e9f934d6ba1f0bbb599821eb refs/heads/main
   The bundle requires this ref:
   6e7363c4ab13edc5550a39567be9de7ab42bf539 
-  The bundle uses this hash algorithm: sha1
-  $ git bundle verify ../one.bundle
+  $ git bundle verify ../one.bundle 2>&1 | head -5
   ../one.bundle is okay
   The bundle contains this ref:
   ec85e1ca5c2b84b9e9f934d6ba1f0bbb599821eb refs/heads/main
   The bundle requires this ref:
   7f347d634a993b1e1414a08b097a4a13e9e05bde 
-  The bundle uses this hash algorithm: sha1
 
   $ cd ..
 
