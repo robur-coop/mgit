@@ -4,7 +4,7 @@
   $ export GIT_COMMITTER_EMAIL="din@osau.re"
   $ export MGIT_DATE=1790353452
   $ export ADD=$(pwd)/add.ml
-  $ git init -q --bare repo.git 2> /dev/null
+  $ git init -q --bare -b main repo.git 2> /dev/null
   $ git clone -q repo.git work 2> /dev/null
   $ cd work
   $ git checkout -q -b main
