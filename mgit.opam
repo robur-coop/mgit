@@ -29,6 +29,7 @@ depends: [
   "x509"
   "mirage-crypto-rng"
   "conf-git" {with-test}
+  "conf-git-daemon" {with-test}
 ]
 
 build: [
