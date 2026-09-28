@@ -23,9 +23,9 @@
 (cram
  (package mgit)
  (applies_to bundle)
- (deps %{bin:mgit}))
+ (deps %{bin:mgit} trim.ml))
 
 (cram
  (package mgit)
  (applies_to mem)
- (deps %{bin:mgit} add.ml))
+ (deps %{bin:mgit} add.ml trim.ml))

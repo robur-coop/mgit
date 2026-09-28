@@ -1,5 +1,6 @@
   $ export MGIT_DATE=1790332361
   $ export MGIT_DEPTH=10
+  $ export TRIM=$(pwd)/trim.ml
   $ mgit create --size=4MiB disk.img
   $ mgit set disk.img /foo -m "First commit" - <<EOF
   > Hello World!
@@ -25,7 +26,7 @@
   $ git init -q 2> /dev/null
   $ git bundle list-heads ../full.bundle
   f5e776a471ba963e17692e1c6b14494f7796dfea refs/heads/main
-  $ git bundle verify ../full.bundle 2>&1 | head -4
+  $ git bundle verify ../full.bundle 2>&1 | ocaml $TRIM | head -4
   ../full.bundle is okay
   The bundle contains this ref:
   f5e776a471ba963e17692e1c6b14494f7796dfea refs/heads/main
@@ -56,10 +57,10 @@
   error: 1c18c346279d5df77a1d1bfff64691f7396343af 
   [1]
   $ cd ../clone
-  $ git bundle verify ../shallow.bundle 2>&1 | head -5
+  $ git bundle verify ../shallow.bundle 2>&1 | ocaml $TRIM | head -5
   ../shallow.bundle is okay
   The bundle contains this ref:
   f5e776a471ba963e17692e1c6b14494f7796dfea refs/heads/main
   The bundle requires this ref:
-  1c18c346279d5df77a1d1bfff64691f7396343af 
+  1c18c346279d5df77a1d1bfff64691f7396343af
   $ cd ..
