@@ -221,8 +221,9 @@ let endpoint =
 
 let remote =
   let doc = "The remote Git repository." in
+  let env = Cmd.Env.info "MGIT_REMOTE" in
   let open Arg in
-  value & opt (some endpoint) None & info [ "r"; "remote" ] ~doc ~docv:"REMOTE"
+  value & opt (some endpoint) None & info [ "r"; "remote" ] ~doc ~env ~docv:"REMOTE"
 
 let branch =
   let doc = "The branch of the Git repository." in

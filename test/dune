@@ -36,3 +36,9 @@
  (applies_to pull)
  (locks git-daemon)
  (deps %{bin:mgit} trim.ml))
+
+(cram
+ (package mgit)
+ (applies_to push)
+ (locks git-daemon)
+ (deps %{bin:mgit}))

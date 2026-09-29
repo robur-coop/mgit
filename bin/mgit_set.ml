@@ -11,6 +11,7 @@ let contents_of_in_channel ic =
   go ()
 
 let run _quiet git message path input =
+  Miou_unix.run @@ fun () ->
   let contents = match input with
     | Some None -> contents_of_in_channel stdin
     | Some (Some filename) ->
