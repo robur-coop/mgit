@@ -28,4 +28,11 @@
 (cram
  (package mgit)
  (applies_to mem)
+ (locks git-daemon)
  (deps %{bin:mgit} add.ml trim.ml))
+
+(cram
+ (package mgit)
+ (applies_to pull)
+ (locks git-daemon)
+ (deps %{bin:mgit} trim.ml))
