@@ -55,22 +55,21 @@
   $ cd repo
   $ echo "line 7" >> f
   $ git add f
-  $ GIT_AUTHOR_DATE"1790697745 +0200" GIT_COMMITTER_DATE="1790697745 +0200" git commit -q -m c7
-  GIT_AUTHOR_DATE1790697745 +0200: command not found
-  [127]
+  $ GIT_AUTHOR_DATE="1790697745 +0200" GIT_COMMITTER_DATE="1790697745 +0200" git commit -q -m c7
   $ cd ..
   $ mgit pull disk.img -r git://localhost/repo#main
+  refs/heads/main: ~ /f
   $ mgit head disk.img
-  22a4cba9ad36ec56c8d4fcf8d082a29d88b02f36
+  b89300d277fb8a512d3cf18d8e667f84b164b665
   $ git -C repo rev-parse HEAD
-  22a4cba9ad36ec56c8d4fcf8d082a29d88b02f36
+  b89300d277fb8a512d3cf18d8e667f84b164b665
   $ mgit get disk.img /f > got
   $ git -C repo show HEAD:f > expected
   $ diff expected got
 
   $ mgit gc disk.img 1
   $ mgit head disk.img
-  22a4cba9ad36ec56c8d4fcf8d082a29d88b02f36
+  b89300d277fb8a512d3cf18d8e667f84b164b665
   $ mgit get disk.img /f > got
   $ diff expected got
   $ mgit bundle disk.img -o one.bundle
@@ -78,12 +77,12 @@
   $ git bundle verify ../one.bundle | ocaml $TRIM | head -5
   ../one.bundle is okay
   The bundle contains this ref:
-  22a4cba9ad36ec56c8d4fcf8d082a29d88b02f36 refs/heads/main
+  b89300d277fb8a512d3cf18d8e667f84b164b665 refs/heads/main
   The bundle requires this ref:
-  bef3acfd844ddf2cb034d2f530235823e9c09ab6
+  22a4cba9ad36ec56c8d4fcf8d082a29d88b02f36
   The bundle uses this hash algorithm: sha1
   $ git rev-parse HEAD~1
-  bef3acfd844ddf2cb034d2f530235823e9c09ab6
+  22a4cba9ad36ec56c8d4fcf8d082a29d88b02f36
   $ cd ..
 
   $ kill $(cat pid)
