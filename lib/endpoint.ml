@@ -113,10 +113,14 @@ let uri t =
 
 let to_string t =
   let user = match t.user with Some user -> user ^ "@" | None -> "" in
-  let host = if String.contains t.host ':' then "[" ^ t.host ^ "]" else t.host in
-  let port = match t.port with Some port -> ":" ^ string_of_int port | None -> "" in
-  let path = if String.length t.path > 0 && t.path.[0] = '/' then t.path else "/" ^ t.path in
   let branch = match t.branch with Some branch -> "#" ^ branch | None -> "" in
-  Fmt.str "%s://%s%s%s%s%s" (string_of_scheme t.scheme) user host port path branch
+  let relative = String.length t.path = 0 || t.path.[0] <> '/' in
+  if t.scheme = `SSH && t.port = None && relative && not (String.contains t.host ':')
+  then Fmt.str "%s%s:%s%s" user t.host t.path branch
+  else
+    let host = if String.contains t.host ':' then "[" ^ t.host ^ "]" else t.host in
+    let port = match t.port with Some port -> ":" ^ string_of_int port | None -> "" in
+    let path = if relative then "/" ^ t.path else t.path in
+    Fmt.str "%s://%s%s%s%s%s" (string_of_scheme t.scheme) user host port path branch
 
 let pp ppf t = Fmt.string ppf (to_string t)
