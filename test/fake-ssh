@@ -1,0 +1,13 @@
+#!/bin/sh
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o|-p) shift 2 ;;
+    *) break ;;
+  esac
+done
+host="$1"
+shift
+[ -n "$FAKE_SSH_NO_ENV" ] && unset GIT_PROTOCOL
+echo "host=$host command=$* protocol=${GIT_PROTOCOL:-none}" >> "${FAKE_SSH_LOG:-/dev/null}"
+exec sh -c "$*"

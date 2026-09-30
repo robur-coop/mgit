@@ -54,3 +54,9 @@
  (applies_to full)
  (locks git-daemon)
  (deps %{bin:mgit} grep.ml))
+
+(cram
+ (package mgit)
+ (applies_to negotiation)
+ (locks git-daemon)
+ (deps %{bin:mgit} fake-ssh grep.ml))
