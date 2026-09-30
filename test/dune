@@ -48,3 +48,9 @@
  (applies_to shallow)
  (locks git-daemon)
  (deps %{bin:mgit} trim.ml))
+
+(cram
+ (package mgit)
+ (applies_to full)
+ (locks git-daemon)
+ (deps %{bin:mgit} grep.ml))

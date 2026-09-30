@@ -7,15 +7,16 @@ open Mgit_cli
 
 let depth =
   let parser str = match int_of_string_opt str with
-    | Some n when n > 0 -> Ok n
-    | Some _ -> error_msgf "The depth must be greater than 0"
+    | Some n when n >= 0 -> Ok n
+    | Some _ -> error_msgf "The depth must be greater or equal to than 0"
     | None -> error_msgf "Invalid depth number" in
   Arg.conv (parser, Fmt.int)
 
 let shallows =
+  let env = Cmd.Env.info "MGIT_DEPTH" in
   let doc = "The number of commits we would like to keep until to shallow." in
   let open Arg in
-  value & pos 1 (some depth) None & info [] ~doc ~docv:"DEPTH"
+  value & pos 1 (some depth) None & info [] ~doc ~env ~docv:"DEPTH"
 
 let term =
   let open Term in

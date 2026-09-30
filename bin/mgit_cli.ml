@@ -203,8 +203,8 @@ let setup_git ctx depth remote branch filename =
 
 let non_negative_int =
   let parser str = match int_of_string_opt str with
-    | Some n when n > 0 -> Ok n
-    | Some _ -> error_msgf "A depth must be greater than 0"
+    | Some n when n >= 0 -> Ok n
+    | Some _ -> error_msgf "A depth must be greater or equal to than 0"
     | None -> error_msgf "Invalid depth: %S" str in
   Arg.conv (parser, Fmt.int)
 
@@ -264,3 +264,8 @@ let setup_git =
   const setup_git $ setup_context $ depth $ remote $ branch $ filename
   |> map (Result.map_error (msgf "%a" Mgit.pp_error))
   |> term_result ~usage:false
+
+let uid =
+  let parser str = Mgit.uid_of_hex str in
+  let pp ppf uid = Fmt.string ppf (Mgit.uid_to_hex uid) in
+  Arg.conv (parser, pp)
