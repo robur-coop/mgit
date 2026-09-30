@@ -51,7 +51,9 @@
   deepen 2147483647
   $ complete shallow.img
   The bundle records a complete history.
-  $ mgit head shallow.img | diff - <(git -C repo rev-parse main)
+  $ git -C repo rev-parse main > expected
+  $ mgit head shallow.img > got
+  $ diff expected got
 
   $ MGIT_DEPTH=0 mgit gc full.img 0
   $ complete full.img
