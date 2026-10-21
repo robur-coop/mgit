@@ -5,10 +5,10 @@ let ( let* ) = Result.bind
 type ctx =
   { happy_eyeballs : Mnet_happy_eyeballs.t
   ; ssh : [ `Pubkey of Awa.Hostkey.priv | `Password of string ] option
-  ; ssh_authenticator : Awa.Keys.authenticator option
+  ; ssh_authenticator : Awa.Keys.authenticator
   ; authenticator : X509.Authenticator.t option (* for HTTPS *) }
 
-let ctx ?ssh ?ssh_authenticator ?authenticator happy_eyeballs =
+let ctx ?ssh ~ssh_authenticator ?authenticator happy_eyeballs =
   { happy_eyeballs; ssh; ssh_authenticator; authenticator }
 
 module Client = struct
@@ -49,9 +49,10 @@ let owned ~finally value =
 let quote str =
   let buf = Buffer.create (String.length str + 2) in
   Buffer.add_char buf '\'';
-  String.iter
-    (function '\'' -> Buffer.add_string buf "'\\''" | chr -> Buffer.add_char buf chr)
-    str;
+  let fn = function
+    | '\'' -> Buffer.add_string buf "'\\''"
+    | chr -> Buffer.add_char buf chr in
+  String.iter fn str;
   Buffer.add_char buf '\'';
   Buffer.contents buf
 
@@ -75,7 +76,7 @@ let connect ctx edn ~service ~version =
           let finally = inhibit Mnet.TCP.close in
           let resource = owned ~finally flow in
           let authenticator = ctx.ssh_authenticator in
-          let result = Mnet_ssh.client ?authenticator ~user credential
+          let result = Mnet_ssh.client authenticator ~user credential
             command flow in
           begin match result with
           | Ok ssh -> Ok { flow= Ssh ssh; resource }
