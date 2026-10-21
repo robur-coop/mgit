@@ -106,19 +106,22 @@ module Make (Block : Blk.BLOCK) (Flow : Sync.S) = struct
       | Some { edn= { Mgit_sync.Endpoint.branch= Some branch; _ }; _ } -> reference branch
       | _ -> reference branch in
     let v store references =
-      let branch =
-        match references with (name, _) :: _ -> name | [] -> branch in
+      let* branch =
+        match List.assoc_opt branch references, references with
+        | Some _, _ | None, [] -> Ok branch
+        | None, _ :: _ -> error_msgf "%s is not followed" branch in
+      Log.debug (fun m -> m "select %s" branch);
       let shared = { store= Atomic.make store; depth; lock= Miou.Mutex.create () } in
-      { shared; branch= Atomic.make branch; pinned= None; now; remote; staged= None } in
+      Ok { shared; branch= Atomic.make branch; pinned= None; now; remote; staged= None } in
     match from with
     | Blk block ->
         begin match Store.load block with
         | Error (`Msg _ as err) -> Error err
         | Error (`Out_of_space | `Not_found _) ->
             error_msgf "Invalid block-device"
-        | Ok store -> Ok (v (Blk_store store) (Store.references store))
+        | Ok store -> v (Blk_store store) (Store.references store)
         end
-    | Mem -> Ok (v (Mem_store (Mgit_mem.make ())) [])
+    | Mem -> v (Mem_store (Mgit_mem.make ())) []
 
   (* Unsafe *)
 
@@ -135,7 +138,11 @@ module Make (Block : Blk.BLOCK) (Flow : Sync.S) = struct
     | Mem_store store -> Mgit_mem.references store
 
   let branch t = Atomic.get t.branch
-  let unsafe_head t = List.assoc_opt (branch t) (unsafe_references t)
+
+  let unsafe_head t =
+    let branch = branch t in
+    Log.debug (fun m -> m "head: %s" branch);
+    List.assoc_opt branch (unsafe_references t)
 
   let unsafe_is_empty : type k. k t -> bool =
    fun t ->

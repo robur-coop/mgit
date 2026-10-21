@@ -2,6 +2,10 @@ let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let msgf fmt = Fmt.kstr (fun msg -> `Msg msg) fmt
 let ( let* ) = Result.bind
 
+let src = Logs.Src.create "mgit.cli"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 open Cmdliner
 
 let output_options = "OUTPUT OPTIONS"
@@ -190,9 +194,11 @@ let now = match Sys.getenv_opt "MGIT_DATE" with
 
 let setup_git ctx depth remote branch filename =
   let* branch = match remote, branch with
-    | Some _, Some _ -> error_msgf "Impossible to choose a branch between the given endpoint and the given branch"
     | Some { Mgit_sync.Endpoint.branch= Some branch; _ }, None -> Ok (Some branch)
-    | (Some { Mgit_sync.Endpoint.branch= None; _ } | None), branch -> Ok branch in
+    | (Some { Mgit_sync.Endpoint.branch= None; _ } | None), branch -> Ok branch
+    | Some { Mgit_sync.Endpoint.branch= Some a; _ }, Some b ->
+      error_msgf "Impossible to choose a branch between the given endpoint (%s) and the given branch (%s)" a b in
+  Log.debug (fun m -> m "branch: %a" Fmt.(Dump.option string) branch);
   let remote = match remote with
     | Some remote ->
       Git.remote ctx (Mgit_sync.Endpoint.to_string remote)
@@ -227,8 +233,9 @@ let remote =
 
 let branch =
   let doc = "The branch of the Git repository." in
+  let env = Cmd.Env.info "MGIT_BRANCH" in
   let open Arg in
-  value & opt (some string) None & info [ "b"; "branch" ] ~doc ~docv:"BRANCH"
+  value & opt (some string) None & info [ "b"; "branch" ] ~doc ~env ~docv:"BRANCH"
 
 let filename =
   let doc = "The block-device as a file to load." in

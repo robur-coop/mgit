@@ -11,5 +11,5 @@ let () =
   let cmd = Cmd.group ~default info
     [ Mgit_create.cmd; Mgit_set.cmd; Mgit_get.cmd; Mgit_head.cmd; Mgit_list.cmd
     ; Mgit_bundle.cmd; Mgit_gc.cmd; Mgit_repl.cmd; Mgit_pull.cmd; Mgit_branches.cmd
-    ; Mgit_pack.cmd ] in
+    ; Mgit_pack.cmd; Mgit_checkout.cmd ] in
   Cmd.(exit (eval cmd))

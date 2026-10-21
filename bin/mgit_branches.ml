@@ -2,8 +2,12 @@ module Git = Mgit_unix
 
 let ( let* ) = Result.bind
 
+let short str = match String.split_on_char '/' str with
+  | "refs" :: "heads" :: rem -> String.concat "/" rem
+  | _ -> str
+
 let run quiet git =
-  let fn (branch, uid) = Fmt.pr "%s %s\n%!" branch (Mgit.uid_to_hex uid) in
+  let fn (branch, uid) = Fmt.pr "%s %s\n%!" (short branch) (Mgit.uid_to_hex uid) in
   let branches = Git.branches git in
   if not quiet then List.iter fn branches; Ok ()
 
