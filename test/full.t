@@ -28,6 +28,7 @@
   0
   $ mgit pack full.img -o full.pack --want $(mgit head full.img)
   $ git init -q client 2> /dev/null
+  $ git -C client checkout -q -b main
   $ git -C client index-pack --stdin < full.pack > /dev/null
   $ git -C client update-ref refs/heads/main $(mgit head full.img)
   $ git -C client fsck --strict

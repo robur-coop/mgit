@@ -6,6 +6,7 @@
   $ export GIT_COMMITTER_DATE="1790689613 +0200"
   $ export MGIT_DATE=1790689613
   $ git init -q --bare repo.git 2> /dev/null
+  $ git -C repo.git checkout -q -b main
   $ git daemon --base-path=. --export-all --enable=receive-pack --reuseaddr --pid-file=pid --detach
   $ export MGIT_REMOTE=git://localhost/repo.git#main
 
