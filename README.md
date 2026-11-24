@@ -15,18 +15,49 @@ fairly simple way to manage a Git repository by allowing:
 
 ## Give a try!
 
+The short example below creates an in-memory Git repository and adds a file
+called `foo.txt` with the value `Hello World`. It then displays the commit
+(which is reproducible as the default date is always 0; see the `now`
+parameter).
+
 ```ocaml
 module Git = Mgit_unix
 
-let run () = Miou_unix.run @@ fun () ->
-  let* t = Git.make ~now Git.Mem in
+let run () =
+  let ( let* ) = Result.bind in
+  let* t = Git.make Git.Mem in
   let fn t = Git.set t "foo.txt" "Hello World!" in
   let* () = Git.change_and_push t fn |> Result.join in
   begin match Git.commit t with
-  | Some (`Clean uid) -> Fmt.pr "%a\n%!" (uid_to_hex uid)
-  | Some (`Dirty uid) -> Fmt.pr "~%a\n%!" (uid_to_hex uid)
+  | Some (`Clean uid) -> Fmt.pr "%s\n%!" (Mgit.uid_to_hex uid)
+  | Some (`Dirty uid) -> Fmt.pr "~%s\n%!" (Mgit.uid_to_hex uid)
   | None -> Fmt.pr "no commit\n%!" end;
   Ok ()
+
+let () = Miou_unix.run @@ fun () ->
+  match run () with
+  | Ok () -> ()
+  | Error err -> Fmt.epr "%a\n%!" Mgit.pp_error err
+```
+
+You can simply compile the project as follows:
+
+```shell
+$ ocamlfind opt -linkpkg -package checkseum.c,digestif.c,mgit.unix main.ml
+$ ./a.out
+35624210f9ece4576d225edc16466dc01d58af64
+```
+
+`mgit` also offers a very small tool that allows you to save a Git repository to
+a file containing absolutely everything; here is the same example as the one
+shown in OCaml:
+
+```shell
+$ mgit create --size=4MiB disk.img
+$ echo 'Hello World!' | mget set disk.img /foo.txt -m "First commit" -
+eefb2efe7bc3415aa01ab18cd0b359b0af294d86
+$ mgit get disk.img /foo.txt
+Hello World!
 ```
 
 ## [`ocaml-git`][ocaml-git] and [`git-kv`][git-kv]
@@ -40,7 +71,8 @@ interoperability with Git. Furthermore:
   The back-and-forth between the implementation, what was required and how to
   integrate it into an existing framework led to the creation of `carton`, a
   scheduler-free implementation of the PACKv2 format (there was, of course, a
-  need to implement decompress, duff and digest).
+  need to implement [decompress][decompress], [duff][duff] and
+  [digestif][digestif]).
 - `git-kv` is a project that focuses on the high-level API. Initially, we had
   to use Irmin to manipulate a repository, but its level of abstraction was far
   too high for our purposes (particularly with regard to
@@ -53,9 +85,9 @@ However, these projects have their limitations:
   unnecessary but which we still have to adhere to, creating significant
   inertia when it comes to improving it.
 - `git-kv` has an interesting API but still, in a sense, inherits the
-  abstractions from `ocaml-git` and uses LWT. This makes it difficult to carry
-  out an update that would retain support for this scheduler whilst introducing
-  Miou as the new scheduler
+  abstractions from `ocaml-git` and uses [lwt][lwt]. This makes it difficult to
+  carry out an update that would retain support for this scheduler whilst
+  introducing [Miou][miou] as the new scheduler
 
 More generally, both implementations have memory usage that only increases over
 time (and with the number of commits), which requires a rethink of the
@@ -69,3 +101,8 @@ specified depth (of the history).
 [uniker.nl]: https://uniker.nl
 [dns-primary]: https://github.com/robur-coop/dns-primary-git
 [opam-mirror]: https://github.com/robur-coop/opam-mirror
+[decompress]: https://github.com/mirage/decompress
+[duff]: https://github.com/mirage/duff
+[digestif]: https://github.com/mirage/digestif
+[lwt]: https://github.com/ocsigen/lwt
+[miou]: https://github.com/robur-coop/miou
