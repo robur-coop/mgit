@@ -5,6 +5,13 @@
  (package mgit)
  (libraries mgit))
 
+(executable
+ (name git_http)
+ (modules git_http)
+ (public_name mgit.http)
+ (libraries str httpcats)
+ (package mgit))
+
 (library
  (name test)
  (modules test)
@@ -70,4 +77,4 @@
 (cram
  (package mgit)
  (applies_to transport)
- (deps %{bin:mgit} fake-ssh))
+ (deps %{bin:mgit} %{bin:mgit.http} fake-ssh))
