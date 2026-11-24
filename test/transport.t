@@ -62,6 +62,7 @@
   $ unset FAKE_SSH_NO_ENV
 
   $ mgit.http . 8765 &
+  $ HTTP=$!
   $ while [ ! -f git-http-ok ]; do sleep 0.1; done
   $ mgit create http.img --size=4MiB
   $ mgit pull http.img -r http://localhost:8765/repo.git#main
@@ -79,7 +80,7 @@
   $ git -C repo.git show main:http
   through http
   $ git -C repo.git fsck --strict
-  $ kill %1
+  $ kill $HTTP; wait $HTTP 2> /dev/null; rm -f git-http-ok
 
   $ git -C work pull -q up main
   $ git clone -q --bare repo.git other.git
@@ -133,6 +134,7 @@
   $ commit c7 work 1795521761
   $ git -C work push -q up main
   $ GIT_HTTP_V0=1 mgit.http . 8765 &
+  $ HTTP=$!
   $ while [ ! -f git-http-ok ]; do sleep 0.1; done
   $ export MGIT_DEPTH=60
   $ mgit create v1.img --size=8MiB
@@ -143,4 +145,4 @@
   $ check v1.img
   ok
   ok
-  $ kill %1
+  $ kill $HTTP; wait $HTTP 2> /dev/null; rm -f git-http-ok
