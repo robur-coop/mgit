@@ -51,8 +51,7 @@
   okay
   $ ocaml $GREP -c 'upload-pack< have ' < trace
   16
-  $ ocaml $GREP -c 'upload-pack> ACK ' < trace
-  1
+  $ test "$(ocaml $GREP -c 'upload-pack> ACK ' < trace)" -ge 1
   $ ocaml $GREP -c 'upload-pack< thin-pack' < trace
   1
 

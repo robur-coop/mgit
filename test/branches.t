@@ -8,7 +8,7 @@
   $ export MGIT_DEPTH=10
   $ export GREP=$(pwd)/grep.ml
 
-  $ git init -q --bare repo.git 2> /dev/null
+  $ git init -q --bare -b main repo.git 2> /dev/null
   $ git init -q work 2> /dev/null
   $ cd work
   $ git checkout -q -b main
