@@ -106,10 +106,28 @@ let test04 =
   Test.check (Cachet.Bstr.length bstr = 0);
   Block.close blk
 
+let test05 =
+  let descr = {text|uncommitted|text} in
+  Test.test ~title:"test05" ~descr @@ fun () ->
+  let filename = tmpf "atomic" in
+  let sector_size = 0x200
+  and length = 0x100_000 in
+  let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
+  let t = or_exit ~pp:pp_error (Blk.format ~rd ~wr blk) in
+  fill t `Active "committed";
+  let t = Blk.sync t in
+  fill t `Inactive "half-written";
+  Block.close blk;
+  let blk = or_exit ~pp:pp_error (Block.load ~sector_size filename) in
+  let t = or_exit ~pp:pp_error (Blk.make ~rd ~wr blk) in
+  let str = read t `Active ~len:9 in
+  Test.check (str = "committed");
+  Block.close blk
+
 let ( / ) = Filename.concat
 
 let () =
-  let tests = [ test00; test01; test02; test03; test04 ] in
+  let tests = [ test00; test01; test02; test03; test04; test05 ] in
   let ({ Test.directory } as runner) = Test.runner (Sys.getcwd () / "_tests") in
   let run idx test =
     Format.printf "test%03d: %!" (succ idx);

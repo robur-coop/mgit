@@ -22,6 +22,11 @@
  (modules g)
  (libraries mgit.unix test))
 
+(test
+ (name d)
+ (modules d)
+ (libraries mgit.unix test))
+
 (cram
  (package mgit)
  (applies_to object)
