@@ -26,7 +26,15 @@
  (name mgit_sync)
  (public_name mgit.sync)
  (modules mgit_sync find_common negotiator endpoint protocol smart)
- (libraries carton-miou.flux mgit.closure mgit.change mgit.object flux carton logs fmt))
+ (libraries
+  carton-miou.flux
+  mgit.closure
+  mgit.change
+  mgit.object
+  flux
+  carton
+  logs
+  fmt))
 
 (library
  (name mgit_http)

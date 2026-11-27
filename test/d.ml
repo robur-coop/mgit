@@ -86,10 +86,41 @@ let test01 =
   let t = or_exit ~pp:pp_error (Git.make ~depth:1 (Git.Blk blk)) in
   readers_and_writer t
 
+let writers (type k) ?(writers= 3) (t : k Git.t) =
+  let writer domain =
+    for idx = 1 to 10 do
+      or_failure ~pp:pp_error (Git.set t (Fmt.str "/w%d_%d" domain idx) (string_of_int idx))
+    done in
+  Miou.parallel writer (List.init writers Fun.id)
+  |> List.iter (function Ok () -> () | Error exn -> raise exn);
+  let files = Git.fold t (fun files ~path:_ _ _ -> files + 1) 0 in
+  Test.check (writers * 10 = files)
+
+let test02 =
+  let descr = {text|parallel writers|text} in
+  Test.test ~title:"test02" ~descr @@ fun () ->
+  let domains = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1) in
+  Miou_unix.run ~domains @@ fun () ->
+  let t = or_exit ~pp:pp_error (Git.make ~depth:1 Git.Mem) in
+  writers t
+
+let test03 =
+  let descr = {text|parallel writers on block device|text} in
+  Test.test ~title:"test02" ~descr @@ fun () ->
+  let domains = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1) in
+  Miou_unix.run ~domains @@ fun () ->
+  let filename = tmpf "mgit" in
+  let sector_size = 0x200
+  and length = 0x2_000_000 in
+  let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
+  or_exit ~pp:pp_error (Git.format blk);
+  let t = or_exit ~pp:pp_error (Git.make ~depth:1 (Git.Blk blk)) in
+  writers t
+
 let ( / ) = Filename.concat
 
 let () =
-  let tests = [ test00; test01 ] in
+  let tests = [ test00; test01; test02; test03 ] in
   let ({ Test.directory } as runner) = Test.runner (Sys.getcwd () / "_tests") in
   let run idx test =
     Format.printf "test%03d: %!" (succ idx);
