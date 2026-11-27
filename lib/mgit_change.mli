@@ -7,4 +7,10 @@ val make : unit -> news
 val find : news -> Carton.Uid.t -> (Carton.Kind.t * string) option
 val read_with : read -> news -> Carton.Uid.t -> (Carton.Kind.t * string) option
 val add : news -> Carton.Kind.t -> string -> Carton.Uid.t
-val root : read:read -> news:news -> Carton.Uid.t option -> t list -> (Carton.Uid.t, [> error ]) result
+
+val root :
+     read:read
+  -> news:news
+  -> Carton.Uid.t option
+  -> t list
+  -> (Carton.Uid.t, [> error ]) result

@@ -13,10 +13,7 @@ module type BLOCK = Device.S
     reached at which the changes to the [Blk] metadata are confirmed (see
     {!val:commit}). *)
 
-type zone =
-  [ `Active
-  | `Inactive
-  | `Temporary ]
+type zone = [ `Active | `Inactive | `Temporary ]
 
 module Make (Block : BLOCK) : sig
   module Append : module type of Append.Make (Block)
@@ -33,8 +30,8 @@ module Make (Block : BLOCK) : sig
       requested zone on the block-device. *)
 
   val cachet : 'm t -> zone -> base:int -> len:int -> 'm t Cachet.t
-  (** [cachet t which ~base ~len] is a {!Cachet.t} whose logical address [0]
-      is the byte [base] of the zone [which] and which never reads further than
+  (** [cachet t which ~base ~len] is a {!Cachet.t} whose logical address [0] is
+      the byte [base] of the zone [which] and which never reads further than
       [base + len]. Out of bounds reads return an empty bigstring, as
       {!type:Cachet.map} requires. *)
 
@@ -42,7 +39,8 @@ module Make (Block : BLOCK) : sig
   (** [seq t which ~off ~len ()] streams [len] bytes of the zone [which],
       starting at the byte [off] of that zone. *)
 
-  val source : 'm t -> zone -> ?off:int -> ?len:int -> unit -> string Flux.source
+  val source :
+    'm t -> zone -> ?off:int -> ?len:int -> unit -> string Flux.source
 
   val metadata : 'm t -> 'm
   val with_metadata : 'm t -> 'm -> 'm t

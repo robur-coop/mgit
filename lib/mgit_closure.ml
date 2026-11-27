@@ -11,21 +11,29 @@ let commits ~read ~depth roots =
   let visited uid =
     let uid = (uid : Carton.Uid.t :> string) in
     if Hashtbl.mem seen uid then true
-    else (Hashtbl.replace seen uid (); false) in
+    else (
+      Hashtbl.replace seen uid ();
+      false)
+  in
   let rec go = function
     | [] -> ()
     | (uid, _) :: rest when visited uid -> go rest
-    | (uid, d) :: rest when depth > 0 && d > depth -> boundary := uid :: !boundary; go rest
+    | (uid, d) :: rest when depth > 0 && d > depth ->
+        boundary := uid :: !boundary;
+        go rest
     | (uid, d) :: rest ->
         begin match read uid with
-        | None -> boundary := uid :: !boundary; go rest
+        | None ->
+            boundary := uid :: !boundary;
+            go rest
         | Some (`A, payload) ->
             kept := uid :: !kept;
             let parents = Mgit_object.parents_of_commit payload in
             let parents = List.map (fun uid -> (uid, d + 1)) parents in
             go (rest @ parents)
         | Some _ -> raise (Not_a_commit uid)
-        end in
+        end
+  in
   go (List.map (fun root -> (root, 1)) roots);
   (List.rev !kept, List.rev !boundary)
 
@@ -35,31 +43,40 @@ let objects ~read commits =
   let visited uid =
     let uid = (uid : Carton.Uid.t :> string) in
     if Hashtbl.mem seen uid then true
-    else (Hashtbl.replace seen uid (); false) in
+    else (
+      Hashtbl.replace seen uid ();
+      false)
+  in
   let rec go = function
     | [] -> ()
     | uid :: rest when visited uid -> go rest
     | uid :: rest ->
         begin match read uid with
         | None -> raise (Missing uid)
-        | Some (`C, _) -> blobs := uid :: !blobs; go rest
+        | Some (`C, _) ->
+            blobs := uid :: !blobs;
+            go rest
         | Some (`B, payload) ->
             trees := uid :: !trees;
             begin match Mgit_object.Tree.of_string payload with
             | Ok tree ->
                 let fn { Mgit_object.Tree.perm; node; _ } =
-                  if perm = `Commit then None else Some node in
+                  if perm = `Commit then None else Some node
+                in
                 go (rest @ List.filter_map fn (Mgit_object.Tree.to_list tree))
             | Error (`Msg _) -> raise (Missing uid)
             end
         | Some ((`A | `D), _) -> raise (Not_a_commit uid)
-        end in
+        end
+  in
   let roots =
     let fn uid =
       match read uid with
       | Some (`A, payload) -> Mgit_object.tree_of_commit payload
-      | _ -> None in
-    List.filter_map fn commits in
+      | _ -> None
+    in
+    List.filter_map fn commits
+  in
   List.iter (fun uid -> go [ uid ]) roots;
   (List.rev !trees, List.rev !blobs)
 
@@ -80,7 +97,8 @@ let uncommon ~read ~exclude roots =
     let everything roots =
       let kept, _ = commits ~read ~depth:max_int roots in
       let trees, blobs = objects ~read kept in
-      kept @ trees @ blobs in
+      kept @ trees @ blobs
+    in
     let known = Hashtbl.create 0x100 in
     let fn uid =
       match read uid with
@@ -88,7 +106,8 @@ let uncommon ~read ~exclude roots =
           List.iter
             (fun uid -> Hashtbl.replace known (uid : Carton.Uid.t :> string) ())
             (everything [ uid ])
-      | _ -> () in
+      | _ -> ()
+    in
     List.iter fn exclude;
     let unknown uid = not (Hashtbl.mem known (uid : Carton.Uid.t :> string)) in
     List.filter unknown (everything roots)

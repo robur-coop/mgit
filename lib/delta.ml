@@ -5,10 +5,11 @@ let src = Logs.Src.create "mgit.delta"
 module Log = (val Logs.src_log src : Logs.LOG)
 
 module Window = struct
-  type 'meta t =
-    { arr : 'meta Cartonnage.Source.t array
-    ; mutable rd_pos : int
-    ; mutable wr_pos : int }
+  type 'meta t = {
+      arr: 'meta Cartonnage.Source.t array
+    ; mutable rd_pos: int
+    ; mutable wr_pos: int
+  }
 
   let make () = { arr= Array.make 0x100 (Obj.magic ()); rd_pos= 0; wr_pos= 0 }
   let is_full { rd_pos; wr_pos; arr } = wr_pos - rd_pos = Array.length arr
@@ -21,7 +22,8 @@ let should_we_apply ~source entry =
   let size_guessed =
     match Target.patch entry with
     | None -> Target.length entry / 3
-    | Some patch -> Patch.length patch / 3 in
+    | Some patch -> Patch.length patch / 3
+  in
   if Source.length source < Target.length entry then false
   else
     let diff = Source.length source - Target.length entry in
@@ -35,12 +37,13 @@ let apply ~load ~window:t entry =
   let target = Lazy.from_fun (fun () -> load uid meta) in
   for i = 0 to len - 1 do
     let source = t.Window.arr.((t.Window.rd_pos + i) land msk) in
-    if Cartonnage.Source.depth source < max_depth
-       && should_we_apply ~source entry
+    if
+      Cartonnage.Source.depth source < max_depth
+      && should_we_apply ~source entry
     then Cartonnage.Target.diff entry ~source ~target:(Lazy.force target)
   done;
-  if Lazy.is_val target || Cartonnage.Target.depth entry == 1
-  then Some (Lazy.force target)
+  if Lazy.is_val target || Cartonnage.Target.depth entry == 1 then
+    Some (Lazy.force target)
   else None
 
 let append ~window:t source =

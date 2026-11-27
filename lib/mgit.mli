@@ -45,16 +45,17 @@ module Make (Block : Blk.BLOCK) (Flow : Sync.S) : sig
   type remote
 
   val remote : Flow.ctx -> string -> (remote, [> `Msg of string ]) result
-  (** [remote ctx url] is the remote repository [url], reached through the
-      flows of [ctx]. [url] can be [git://host[:port]/path],
+  (** [remote ctx url] is the remote repository [url], reached through the flows
+      of [ctx]. [url] can be [git://host[:port]/path],
       [ssh://[user@]host[:port]/path], [[user@]host:path] or
       [http(s)://host[:port]/path], followed by [#branch] to choose the branch
       to follow ([main] by default). *)
 
-  val format : ?ratio:float -> ?length:int -> Block.t -> (unit, [> error ]) result
+  val format :
+    ?ratio:float -> ?length:int -> Block.t -> (unit, [> error ]) result
   (** [format block] prepares [block] to hold a repository. [ratio] is the part
-      of it used as a reception temporary buffer, the rest is split into the
-      two zones of the generations. *)
+      of it used as a reception temporary buffer, the rest is split into the two
+      zones of the generations. *)
 
   val make :
        ?branch:string
@@ -64,13 +65,12 @@ module Make (Block : Blk.BLOCK) (Flow : Sync.S) : sig
     -> 'k from
     -> ('k t, [> error ]) result
   (** [make from] opens a repository, with a handle on its default branch.
-      - [branch] is the branch to follow when the repository is empty and
-        when the [#branch] of the [remote] does not say it;
-      - [depth] is the number of commits a generation keeps (1 by default),
-        [0] keeps the whole history: nothing is shallow, and if the
-        repository is (it was opened with another depth), the next
-        {!val:pull} fetches what is behind its boundary (as
-        [git fetch --unshallow]);
+      - [branch] is the branch to follow when the repository is empty and when
+        the [#branch] of the [remote] does not say it;
+      - [depth] is the number of commits a generation keeps (1 by default), [0]
+        keeps the whole history: nothing is shallow, and if the repository is
+        (it was opened with another depth), the next {!val:pull} fetches what is
+        behind its boundary (as [git fetch --unshallow]);
       - [now] gives the time (in seconds since the epoch) used to date the
         commits of the local changes;
       - [remote], if any, is where {!val:pull} fetches from and where the local
@@ -80,40 +80,44 @@ module Make (Block : Blk.BLOCK) (Flow : Sync.S) : sig
   (** [branch t] is the branch of the handle [t] (like [refs/heads/main]). *)
 
   val branches : 'k t -> (string * uid) list
-  (** [branches t] is the branches the repository follows and their commit,
-      the default is first one. *)
+  (** [branches t] is the branches the repository follows and their commit, the
+      default is first one. *)
 
   val checkout : 'k t -> string -> ('k t, [> error ]) result
   (** [checkout t name] is a handle on the branch [name] ([dev] or
-      [refs/heads/dev]), [t] stays on its own (its branch does not change).
-      When the repository does not follow [name] yet, it starts to: with the
-      branch of the remote if it has one (fetched as {!val:pull} does), or with
-      a new local branch at the commit of [t] otherwise (created on the remote
-      by its first push). *)
+      [refs/heads/dev]), [t] stays on its own (its branch does not change). When
+      the repository does not follow [name] yet, it starts to: with the branch
+      of the remote if it has one (fetched as {!val:pull} does), or with a new
+      local branch at the commit of [t] otherwise (created on the remote by its
+      first push). *)
 
   val forget : 'k t -> string -> (unit, [> error ]) result
-  (** [forget t name] stops following the branch [name] (the commits only
-      it needed disappear). The last branch can not be forgotten. A handle on
+  (** [forget t name] stops following the branch [name] (the commits only it
+      needed disappear). The last branch can not be forgotten. A handle on
       [name] does not see anything anymore, and its changes are refused
       ([`Not_found]). *)
 
   val set_default : 'k t -> string -> (unit, [> error ]) result
-  (** [set_default t name] makes the branch [name] (which we follow) the
-      default one: the one of the handle {!val:make} gives, and the first
-      reference of the bundle. It rewrites the whole generation: it is meant for rare
+  (** [set_default t name] makes the branch [name] (which we follow) the default
+      one: the one of the handle {!val:make} gives, and the first reference of
+      the bundle. It rewrites the whole generation: it is meant for rare
       changes. *)
 
   val commit : 'k t -> [ `Clean of uid | `Dirty of uid ] option
-  (** [commit t] is the last commit of the branch of [t], [`Dirty] while we are inside of a
-      {!val:change_and_push}, [None] for an empty repository. *)
+  (** [commit t] is the last commit of the branch of [t], [`Dirty] while we are
+      inside of a {!val:change_and_push}, [None] for an empty repository. *)
 
   val get : 'k t -> string -> (perm * string, [> error ]) result
   (** [get t path] is the contents of the file [path] (e.g. ["/dir/file"]). *)
 
-  val list : 'k t -> string -> ((string * [ `Value | `Dictionary ]) list, [> error ]) result
+  val list :
+       'k t
+    -> string
+    -> ((string * [ `Value | `Dictionary ]) list, [> error ]) result
   (** [list t path] is the entries of the directory [path]. *)
 
-  val fold : 'k t -> ('a -> path:string list -> perm -> string -> 'a) -> 'a -> 'a
+  val fold :
+    'k t -> ('a -> path:string list -> perm -> string -> 'a) -> 'a -> 'a
   (** [fold t fn acc] folds over all the files of [t]. *)
 
   val set : 'k t -> ?perm:perm -> string -> string -> (unit, [> error ]) result
@@ -150,12 +154,13 @@ module Make (Block : Blk.BLOCK) (Flow : Sync.S) : sig
       which were not pushed are dropped; a branch the remote does not have is
       kept as it is. *)
 
-  val push : 'k t -> ?branches:string list -> remote -> (unit, [> error ]) result
-  (** [push t ~branches remote] pushes to [remote] (another one than the
-      remote of [t], e.g. a mirror) the [branches] ([dev] or
-      [refs/heads/dev], all the branches we follow by default) as they are in
-      the current generation, in one session. As for a change, a push which
-      would not be a fast-forward is refused. *)
+  val push :
+    'k t -> ?branches:string list -> remote -> (unit, [> error ]) result
+  (** [push t ~branches remote] pushes to [remote] (another one than the remote
+      of [t], e.g. a mirror) the [branches] ([dev] or [refs/heads/dev], all the
+      branches we follow by default) as they are in the current generation, in
+      one session. As for a change, a push which would not be a fast-forward is
+      refused. *)
 
   val shallows : 'k t -> uid list
   (** [shallows t] is the commits we keep but whose parents we do not (the
@@ -163,22 +168,27 @@ module Make (Block : Blk.BLOCK) (Flow : Sync.S) : sig
       advertises them to its clients. *)
 
   val mem : 'k t -> uid -> bool
-  (** [mem t uid] is [true] if the current generation has the object [uid]
-      (e.g. to acknowledge a [have] of a client). *)
+  (** [mem t uid] is [true] if the current generation has the object [uid] (e.g.
+      to acknowledge a [have] of a client). *)
 
   val to_pack :
-    'k t -> ?haves:uid list -> uid list -> (string -> unit) -> (unit, [> error ]) result
+       'k t
+    -> ?haves:uid list
+    -> uid list
+    -> (string -> unit)
+    -> (unit, [> error ]) result
   (** [to_pack t ~haves wants fn] gives to [fn], chunk by chunk, the PACK file
       of what is reachable from the commits [wants] and not from the commits
       [haves] (the client has them). A [have] we do not know is ignored, a
       [want] we do not have (or which is not a commit) is an error. The PACK
-      file is not thin. As {!val:to_bundle}, the generation is pinned while
-      [fn] is called. *)
+      file is not thin. As {!val:to_bundle}, the generation is pinned while [fn]
+      is called. *)
 
-  type update =
-    { name : string  (** The branch ([dev] or [refs/heads/dev]). *)
-    ; old : uid option  (** What the client saw, [None] for a new branch. *)
-    ; uid : uid  (** Its new commit. *) }
+  type update = {
+      name: string  (** The branch ([dev] or [refs/heads/dev]). *)
+    ; old: uid option  (** What the client saw, [None] for a new branch. *)
+    ; uid: uid  (** Its new commit. *)
+  }
 
   val load :
        'k t

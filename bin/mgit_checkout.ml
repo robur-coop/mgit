@@ -2,7 +2,8 @@ module Git = Mgit_unix
 
 let ( let* ) = Result.bind
 
-let short str = match String.split_on_char '/' str with
+let short str =
+  match String.split_on_char '/' str with
   | "refs" :: "heads" :: rem -> String.concat "/" rem
   | _ -> str
 
@@ -10,9 +11,13 @@ let run quiet git branch =
   Miou_unix.run @@ fun () ->
   let* git = Git.checkout git branch in
   match Git.commit git with
-  | None -> if not quiet then Fmt.pr "%s\n%!" (short (Git.branch git)); Ok ()
+  | None ->
+      if not quiet then Fmt.pr "%s\n%!" (short (Git.branch git));
+      Ok ()
   | Some (`Clean uid | `Dirty uid) ->
-    if not quiet then Fmt.pr "%s %s\n%!" (short (Git.branch git)) (Mgit.uid_to_hex uid); Ok ()
+      if not quiet then
+        Fmt.pr "%s %s\n%!" (short (Git.branch git)) (Mgit.uid_to_hex uid);
+      Ok ()
 
 open Cmdliner
 open Mgit_cli
@@ -24,7 +29,10 @@ let new_branch =
 
 let term =
   let open Term in
-  const run $ setup_logs $ setup_git $ new_branch
+  const run
+  $ setup_logs
+  $ setup_git
+  $ new_branch
   |> map (Result.map_error (msgf "%a" Mgit.pp_error))
   |> term_result ~usage:false
 

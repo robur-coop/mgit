@@ -1,6 +1,8 @@
 let exitf fmt = Fmt.kstr (fun msg -> Fmt.epr "%s.\n%!" msg; exit 1) fmt
 let or_exit ~pp = function Ok v -> v | Error err -> exitf "%a" pp err
-let tmpf ?(ext= ".img") fmt = Fmt.kstr (fun str -> Filename.temp_file str ext) fmt
+
+let tmpf ?(ext = ".img") fmt =
+  Fmt.kstr (fun str -> Filename.temp_file str ext) fmt
 
 module Block = Mgit_unix.Block
 module Blk = Mgit_blk.Make (Block)
@@ -10,23 +12,23 @@ let fill t which str =
   Flux.(Stream.into sink (Stream.from (Source.list [ str ])))
 
 let read t which ~len =
-  Blk.seq t which ~len ()
-  |> List.of_seq
-  |> String.concat ""
+  Blk.seq t which ~len () |> List.of_seq |> String.concat ""
 
 let pp_error ppf = function
   | `Msg msg -> Fmt.string ppf msg
   | `Invalid_metadata -> Fmt.string ppf "Invalid metadata"
 
 let rd bstr = Ok (Int64.to_int (Bstr.get_int64_le bstr 0))
-let wr v bstr = Bstr.set_int64_le bstr 0 (Int64.of_int v); 8
+
+let wr v bstr =
+  Bstr.set_int64_le bstr 0 (Int64.of_int v);
+  8
 
 let test00 =
   let descr = {text|zone are disjoint|text} in
   Test.test ~title:"test00" ~descr @@ fun () ->
   let filename = tmpf "mgit" in
-  let sector_size = 0x200
-  and length = 0x100_000 in
+  let sector_size = 0x200 and length = 0x100_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   let finally () = Block.close blk in
   Fun.protect ~finally @@ fun () ->
@@ -42,8 +44,7 @@ let test01 =
   let descr = {text|swap|text} in
   Test.test ~title:"test02" ~descr @@ fun () ->
   let filename = tmpf "mgit" in
-  let sector_size = 0x200
-  and length = 0x100_000 in
+  let sector_size = 0x200 and length = 0x100_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   let t = or_exit ~pp:pp_error (Blk.format ~rd ~wr blk) in
   fill t `Active "old";
@@ -62,8 +63,7 @@ let test02 =
   let descr = {text|uncommitted|text} in
   Test.test ~title:"test03" ~descr @@ fun () ->
   let filename = tmpf "mgit" in
-  let sector_size = 0x200
-  and length = 0x100_000 in
+  let sector_size = 0x200 and length = 0x100_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   let t = or_exit ~pp:pp_error (Blk.format ~rd ~wr blk) in
   fill t `Active "commit";
@@ -79,8 +79,7 @@ let test03 =
   let descr = {text|metadata|text} in
   Test.test ~title:"test03" ~descr @@ fun () ->
   let filename = tmpf "mgit" in
-  let sector_size = 0x200
-  and length = 0x100_000 in
+  let sector_size = 0x200 and length = 0x100_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   let t = or_exit ~pp:pp_error (Blk.format ~rd ~wr blk) in
   Test.check (Blk.metadata t = 0);
@@ -95,8 +94,7 @@ let test04 =
   let descr = {text|bound|text} in
   Test.test ~title:"test04" ~descr @@ fun () ->
   let filename = tmpf "mgit" in
-  let sector_size = 0x200
-  and length = 0x100_000 in
+  let sector_size = 0x200 and length = 0x100_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   let t = or_exit ~pp:pp_error (Blk.format ~rd ~wr blk) in
   fill t `Active (String.make 4096 'x');
@@ -110,8 +108,7 @@ let test05 =
   let descr = {text|uncommitted|text} in
   Test.test ~title:"test05" ~descr @@ fun () ->
   let filename = tmpf "atomic" in
-  let sector_size = 0x200
-  and length = 0x100_000 in
+  let sector_size = 0x200 and length = 0x100_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   let t = or_exit ~pp:pp_error (Blk.format ~rd ~wr blk) in
   fill t `Active "committed";

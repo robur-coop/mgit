@@ -5,7 +5,6 @@ type t = string list * [ `Set of Mgit_object.Tree.perm * string | `Rem ]
 
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let ( let* ) = Result.bind
-
 let make () : news = Hashtbl.create 0x10
 let find news uid = Hashtbl.find_opt news (uid : Carton.Uid.t :> string)
 
@@ -45,12 +44,15 @@ let rec apply ~read ~news uid path value =
       let sub =
         match Mgit_object.Tree.find t name with
         | Some { Mgit_object.Tree.perm= `Dir; node; _ } -> node
-        | Some _ | None -> empty_tree in
+        | Some _ | None -> empty_tree
+      in
       let* sub = apply ~read ~news sub rest value in
       let t =
         match sub with
-        | Some node -> Mgit_object.Tree.add t { Mgit_object.Tree.perm= `Dir; name; node }
-        | None -> Mgit_object.Tree.remove t name in
+        | Some node ->
+            Mgit_object.Tree.add t { Mgit_object.Tree.perm= `Dir; name; node }
+        | None -> Mgit_object.Tree.remove t name
+      in
       Ok (Some (add news `B (Mgit_object.Tree.to_string t)))
 
 let root ~read ~news root changes =
@@ -63,7 +65,9 @@ let root ~read ~news root changes =
         let root =
           match root with
           | Some uid -> uid
-          | None -> add news `B (Mgit_object.Tree.to_string Mgit_object.Tree.empty)
+          | None ->
+              add news `B (Mgit_object.Tree.to_string Mgit_object.Tree.empty)
         in
-        go root rest in
+        go root rest
+  in
   go root changes

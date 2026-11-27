@@ -21,25 +21,25 @@ let pp_error ppf = function
   | `Err msg -> Fmt.pf ppf "Remote error: %s" msg
 
 type refs = {
-  refs : (string * string) list (* refname, oid (hex) *);
-  peeled : (string * string) list;
-      (* refname, oid (hex) of the object an annotated tag points at *)
-  head : Carton.Uid.t option; (* [None] for an empty repository *)
-  head_symref : string option (* refs/heads/main *);
+    refs: (string * string) list (* refname, oid (hex) *)
+  ; peeled: (string * string) list
+        (* refname, oid (hex) of the object an annotated tag points at *)
+  ; head: Carton.Uid.t option (* [None] for an empty repository *)
+  ; head_symref: string option (* refs/heads/main *)
 }
 
 type advertisement =
-  | V1 of { refs : refs; capabilities : string list }
-  | V2 of { capabilities : string list }
+  | V1 of { refs: refs; capabilities: string list }
+  | V2 of { capabilities: string list }
 
 let attribute ~prefix attrs =
   let fn attr =
-    if String.starts_with ~prefix attr
-    then
+    if String.starts_with ~prefix attr then
       let off = String.length prefix
       and len = String.length attr - String.length prefix in
       Some (String.sub attr off len)
-    else None in
+    else None
+  in
   List.find_map fn attrs
 
 let err_of_pkt pkt = attribute ~prefix:"ERR " [ pkt ]
@@ -60,12 +60,14 @@ let advertisement_v1 first ctx =
   let first, capabilities =
     match String.index_opt first '\000' with
     | Some idx ->
-        ( String.sub first 0 idx,
-          String.sub first (idx + 1) (String.length first - idx - 1) )
-    | None -> (first, "") in
+        ( String.sub first 0 idx
+        , String.sub first (idx + 1) (String.length first - idx - 1) )
+    | None -> (first, "")
+  in
   let capabilities =
     List.filter (( <> ) "")
-      (String.split_on_char ' ' (String.trim capabilities)) in
+      (String.split_on_char ' ' (String.trim capabilities))
+  in
   let head_symref = attribute ~prefix:"symref=HEAD:" capabilities in
   let rec go acc ctx =
     let* pkt = Protocol.decode_pkt ctx in
@@ -75,29 +77,31 @@ let advertisement_v1 first ctx =
         begin match ref_of_line line with
         | Some value -> go (value :: acc) ctx
         | None -> Protocol.error `Invalid_pkt_line
-        end in
+        end
+  in
   match (err_of_pkt first, ref_of_line first) with
   | Some msg, _ -> Protocol.error (`Err msg)
   | None, None -> Protocol.error `Invalid_pkt_line
   | None, Some value ->
       let* advertised = go [ value ] ctx in
       let fn (refs, peeled) (name, oid) =
-        if name = "capabilities^{}"
-        then (refs, peeled)
-        else if String.ends_with ~suffix:"^{}" name
-        then
+        if name = "capabilities^{}" then (refs, peeled)
+        else if String.ends_with ~suffix:"^{}" name then
           let name = String.sub name 0 (String.length name - 3) in
           (refs, (name, oid) :: peeled)
-        else ((name, oid) :: refs, peeled) in
+        else ((name, oid) :: refs, peeled)
+      in
       let refs, peeled = List.fold_left fn ([], []) advertised in
       let refs = List.rev refs and peeled = List.rev peeled in
       let head = head_of_refs refs head_symref in
       Protocol.return
-        (V1 { refs = { refs; peeled; head; head_symref }; capabilities })
+        (V1 { refs= { refs; peeled; head; head_symref }; capabilities })
 
 (* NOTE(dinosaure): for [git-daemon] *)
 let proto_request ?(version = 2) ~service ~host path ctx =
-  let extra = if version >= 2 then Fmt.str "\000version=%d\000" version else "" in
+  let extra =
+    if version >= 2 then Fmt.str "\000version=%d\000" version else ""
+  in
   Protocol.encode_pkt ctx "%s %s\000host=%s\000%s" service path host extra
 
 let advertisement ctx =
@@ -106,7 +110,8 @@ let advertisement ctx =
     match String.trim pkt with
     | "" -> version ctx
     | pkt when pkt.[0] = '#' -> version ctx (* NOTE(dinosaure): for HTTP *)
-    | pkt -> Protocol.return pkt in
+    | pkt -> Protocol.return pkt
+  in
   let* pkt = version ctx in
   match String.split_on_char ' ' pkt with
   | [ "version"; "2" ] ->
@@ -114,7 +119,8 @@ let advertisement ctx =
         let* pkt = Protocol.decode_pkt ctx in
         match String.trim pkt with
         | "" -> Protocol.return (List.rev acc)
-        | capability -> capabilities (capability :: acc) ctx in
+        | capability -> capabilities (capability :: acc) ctx
+      in
       let* capabilities = capabilities [] ctx in
       Protocol.return (V2 { capabilities })
   | [ "version"; ("0" | "1") ] ->
@@ -144,41 +150,42 @@ let ls_refs ctx =
         begin match String.split_on_char ' ' line with
         | oid :: name :: attrs ->
             let head_symref =
-              if name = "HEAD"
-              then
+              if name = "HEAD" then
                 match attribute ~prefix:"symref-target:" attrs with
                 | Some _ as value -> value
                 | None -> head_symref
-              else head_symref in
+              else head_symref
+            in
             let peeled =
               match attribute ~prefix:"peeled:" attrs with
               | Some oid -> (name, oid) :: peeled
-              | None -> peeled in
+              | None -> peeled
+            in
             go ((name, oid) :: acc) peeled head_symref ctx
         | _ -> Protocol.error `Invalid_pkt_line
-        end in
+        end
+  in
   let* refs, peeled, head_symref = go [] [] None ctx in
   let head = head_of_refs refs head_symref in
   Protocol.return { refs; peeled; head; head_symref }
 
 let rec side_band errored push ctx =
   let* pkt = Protocol.decode_pkt ctx in
-  if String.length pkt = 0
-  then Protocol.return errored
+  if String.length pkt = 0 then Protocol.return errored
   else
     let data = String.sub pkt 1 (String.length pkt - 1) in
     match pkt.[0] with
-    | '\001' ->
-        push data ;
-        side_band errored push ctx
+    | '\001' -> push data; side_band errored push ctx
     | '\003' ->
-        Log.err (fun m -> m "[remote]: %s" data) ;
+        Log.err (fun m -> m "[remote]: %s" data);
         side_band true push ctx
     | _ -> side_band errored push ctx
 
 let rec iter fn = function
   | [] -> Protocol.return ()
-  | x :: rest -> let* () = fn x in iter fn rest
+  | x :: rest ->
+      let* () = fn x in
+      iter fn rest
 
 let hex (uid : Carton.Uid.t) = Ohex.encode (uid :> string)
 
@@ -215,7 +222,8 @@ let shallow_list ctx =
                 Log.err (fun m -> m "Expected shallow/unshallow, got %S" line);
                 Protocol.error `Invalid_pkt_line
             end
-        end in
+        end
+  in
   go []
 
 type ack =
@@ -236,7 +244,7 @@ let get_ack ctx =
   | `Flush | `Delim | `End ->
       Log.err (fun m -> m "Expected ACK/NAK, got a flush packet");
       Protocol.error `Invalid_pkt_line
-  | `Line line ->
+  | `Line line -> (
       let line = String.trim line in
       if line = "NAK" then Protocol.return `NAK
       else if String.starts_with ~prefix:"ACK " line && String.length line >= 44
@@ -246,21 +254,25 @@ let get_ack ctx =
         | Some uid ->
             let rest = String.sub line 44 (String.length line - 44) in
             if String.trim rest = "" then Protocol.return (`ACK uid)
-            else if contains ~sub:"continue" rest then Protocol.return (`ACK_continue uid)
-            else if contains ~sub:"common" rest then Protocol.return (`ACK_common uid)
-            else if contains ~sub:"ready" rest then Protocol.return (`ACK_ready uid)
+            else if contains ~sub:"continue" rest then
+              Protocol.return (`ACK_continue uid)
+            else if contains ~sub:"common" rest then
+              Protocol.return (`ACK_common uid)
+            else if contains ~sub:"ready" rest then
+              Protocol.return (`ACK_ready uid)
             else Protocol.return (`ACK uid)
       else
         match err_of_pkt line with
         | Some msg -> Protocol.error (`Err msg)
         | None ->
             Log.err (fun m -> m "Expected ACK/NAK, got %S" line);
-            Protocol.error `Invalid_pkt_line
+            Protocol.error `Invalid_pkt_line)
 
-type command =
-  { old_uid : Carton.Uid.t option
-  ; new_uid : Carton.Uid.t
-  ; name : string }
+type command = {
+    old_uid: Carton.Uid.t option
+  ; new_uid: Carton.Uid.t
+  ; name: string
+}
 
 let zero_id = String.make 40 '0'
 
@@ -270,12 +282,15 @@ let send_commands ~capabilities commands ctx =
     | [] -> Protocol.encode_flush_pkt ctx
     | { old_uid; new_uid; name } :: rest ->
         let* () =
-          if first
-          then
+          if first then
             Protocol.encode_pkt ctx "%s %s %s\000%s" (old old_uid) (hex new_uid)
-              name (String.concat " " capabilities)
-          else Protocol.encode_pkt ctx "%s %s %s" (old old_uid) (hex new_uid) name in
-        go false rest in
+              name
+              (String.concat " " capabilities)
+          else
+            Protocol.encode_pkt ctx "%s %s %s" (old old_uid) (hex new_uid) name
+        in
+        go false rest
+  in
   go true commands
 
 let rec send_seq seq ctx =
@@ -285,21 +300,23 @@ let rec send_seq seq ctx =
       let* () = Protocol.encode_str ctx str in
       send_seq rest ctx
 
-type report =
-  { unpack : (unit, string) result
-  ; statuses : (string * (unit, string) result) list }
+type report = {
+    unpack: (unit, string) result
+  ; statuses: (string * (unit, string) result) list
+}
 
 let report_status ctx =
   let* unpack =
     let* pkt = Protocol.decode_pkt ctx in
     let line = String.trim pkt in
     if line = "unpack ok" then Protocol.return (Ok ())
-    else if String.starts_with ~prefix:"unpack " line
-    then Protocol.return (Error (String.sub line 7 (String.length line - 7)))
+    else if String.starts_with ~prefix:"unpack " line then
+      Protocol.return (Error (String.sub line 7 (String.length line - 7)))
     else
       match err_of_pkt line with
       | Some msg -> Protocol.error (`Err msg)
-      | None -> Protocol.error `Invalid_pkt_line in
+      | None -> Protocol.error `Invalid_pkt_line
+  in
   let rec go acc =
     let* pkt = Protocol.decode_pkt ctx in
     match String.trim pkt with
@@ -307,8 +324,10 @@ let report_status ctx =
     | line ->
         begin match String.split_on_char ' ' line with
         | "ok" :: name :: _ -> go ((name, Ok ()) :: acc)
-        | "ng" :: name :: reason -> go ((name, Error (String.concat " " reason)) :: acc)
+        | "ng" :: name :: reason ->
+            go ((name, Error (String.concat " " reason)) :: acc)
         | _ -> Protocol.error `Invalid_pkt_line
-        end in
+        end
+  in
   let* statuses = go [] in
   Protocol.return { unpack; statuses }

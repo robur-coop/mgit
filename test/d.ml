@@ -2,7 +2,9 @@ let failwithf fmt = Fmt.failwith fmt
 let exitf fmt = Fmt.kstr (fun msg -> Fmt.epr "%s.\n%!" msg; exit 1) fmt
 let or_exit ~pp = function Ok v -> v | Error err -> exitf "%a" pp err
 let or_failure ~pp = function Ok v -> v | Error err -> failwithf "%a" pp err
-let tmpf ?(ext= ".img") fmt = Fmt.kstr (fun str -> Filename.temp_file str ext) fmt
+
+let tmpf ?(ext = ".img") fmt =
+  Fmt.kstr (fun str -> Filename.temp_file str ext) fmt
 
 let pp_error ppf = function
   | #Mgit.error as err -> Mgit.pp_error ppf err
@@ -22,14 +24,15 @@ let check t =
     match path with
     | [ "zcounter" ] -> (files + 1, int_of_string str)
     | [ filename ] ->
-      let idx = Scanf.sscanf filename "file_%d" Fun.id in
-      if not (String.equal str (contents idx))
-      then failwithf "/%s has not the expected contents" filename;
-      (files + 1, counter)
-    | _ -> failwithf "Unexpected %s" (String.concat "/" path) in
+        let idx = Scanf.sscanf filename "file_%d" Fun.id in
+        if not (String.equal str (contents idx)) then
+          failwithf "/%s has not the expected contents" filename;
+        (files + 1, counter)
+    | _ -> failwithf "Unexpected %s" (String.concat "/" path)
+  in
   Git.fold t fn (0, -1)
 
-let readers_and_writer (type k) ?(commits= 30) ?(readers= 3) (t : k Git.t) =
+let readers_and_writer (type k) ?(commits = 30) ?(readers = 3) (t : k Git.t) =
   let ( let* ) = Result.bind in
   let stop = Atomic.make false and started = Atomic.make 0 in
   let reader () =
@@ -38,28 +41,36 @@ let readers_and_writer (type k) ?(commits= 30) ?(readers= 3) (t : k Git.t) =
       if Atomic.get stop then seen
       else
         let files, counter = check t in
-        if (files > 0 || counter >= 0)
-        && files <> counter + 1
-        then failwithf "counter %d but %d files" counter files;
+        if (files > 0 || counter >= 0) && files <> counter + 1 then
+          failwithf "counter %d but %d files" counter files;
         Miou.yield ();
-        go (succ seen) in
-    go 0 in
-  let prm0 = Miou.async @@ fun () ->
+        go (succ seen)
+    in
+    go 0
+  in
+  let prm0 =
+    Miou.async @@ fun () ->
     let finally stop = Atomic.set stop true in
     let resource = Miou.Ownership.create ~finally stop in
     Miou.Ownership.own resource;
-    while Atomic.get started < readers do Miou.yield () done;
+    while Atomic.get started < readers do
+      Miou.yield ()
+    done;
     (* readers are ready to read! *)
     for idx = 1 to commits do
-      let result = Git.change_and_push t @@ fun t ->
+      let result =
+        Git.change_and_push t @@ fun t ->
         let* () = Git.set t "/zcounter" (string_of_int idx) in
-        Git.set t (Fmt.str "/file_%d" idx) (contents idx) in
+        Git.set t (Fmt.str "/file_%d" idx) (contents idx)
+      in
       or_failure ~pp:pp_error (Result.join result)
     done;
-    Miou.Ownership.release resource in
+    Miou.Ownership.release resource
+  in
   let seen =
     Miou.parallel reader (List.init readers (Fun.const ()))
-    |> List.map @@ or_failure ~pp:Fmt.exn in
+    |> List.map @@ or_failure ~pp:Fmt.exn
+  in
   Miou.await_exn prm0;
   let fn acc seen = acc && seen > 1 in
   Test.check (List.fold_left fn true seen);
@@ -79,18 +90,19 @@ let test01 =
   let domains = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1) in
   Miou_unix.run ~domains @@ fun () ->
   let filename = tmpf "mgit" in
-  let sector_size = 0x200
-  and length = 0x2_000_000 in
+  let sector_size = 0x200 and length = 0x2_000_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   or_exit ~pp:pp_error (Git.format blk);
   let t = or_exit ~pp:pp_error (Git.make ~depth:1 (Git.Blk blk)) in
   readers_and_writer t
 
-let writers (type k) ?(writers= 3) (t : k Git.t) =
+let writers (type k) ?(writers = 3) (t : k Git.t) =
   let writer domain =
     for idx = 1 to 10 do
-      or_failure ~pp:pp_error (Git.set t (Fmt.str "/w%d_%d" domain idx) (string_of_int idx))
-    done in
+      or_failure ~pp:pp_error
+        (Git.set t (Fmt.str "/w%d_%d" domain idx) (string_of_int idx))
+    done
+  in
   Miou.parallel writer (List.init writers Fun.id)
   |> List.iter (function Ok () -> () | Error exn -> raise exn);
   let files = Git.fold t (fun files ~path:_ _ _ -> files + 1) 0 in
@@ -110,8 +122,7 @@ let test03 =
   let domains = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1) in
   Miou_unix.run ~domains @@ fun () ->
   let filename = tmpf "mgit" in
-  let sector_size = 0x200
-  and length = 0x2_000_000 in
+  let sector_size = 0x200 and length = 0x2_000_000 in
   let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
   or_exit ~pp:pp_error (Git.format blk);
   let t = or_exit ~pp:pp_error (Git.make ~depth:1 (Git.Blk blk)) in

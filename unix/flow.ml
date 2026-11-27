@@ -2,9 +2,7 @@ let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let ( let* ) = Result.bind
 let inhibit fn value = try fn value with _exn -> ()
 
-type ctx =
-  { ssh : string
-  ; authenticator : X509.Authenticator.t option }
+type ctx = { ssh: string; authenticator: X509.Authenticator.t option }
 
 let ctx ?(ssh = "ssh") ?authenticator () = { ssh; authenticator }
 
@@ -46,16 +44,18 @@ let rec attempt = function
 
 (* SSH *)
 
-type process =
-  { pid : int
-  ; stdin : Miou_unix.file_descr
-  ; stdout : Miou_unix.file_descr }
+type process = {
+    pid: int
+  ; stdin: Miou_unix.file_descr
+  ; stdout: Miou_unix.file_descr
+}
 
 let quote str =
   let buf = Buffer.create (String.length str + 2) in
   Buffer.add_char buf '\'';
   String.iter
-    (function '\'' -> Buffer.add_string buf "'\\''" | chr -> Buffer.add_char buf chr)
+    (function
+      | '\'' -> Buffer.add_string buf "'\\''" | chr -> Buffer.add_char buf chr)
     str;
   Buffer.add_char buf '\'';
   Buffer.contents buf
@@ -65,23 +65,27 @@ let quote str =
 let abort { pid; stdin; stdout } =
   inhibit Unix.close (Miou_unix.to_file_descr stdin);
   inhibit Unix.close (Miou_unix.to_file_descr stdout);
-  inhibit (fun () -> Unix.kill pid Sys.sigkill ) ();
+  inhibit (fun () -> Unix.kill pid Sys.sigkill) ();
   inhibit (fun () -> ignore (Unix.waitpid [] pid)) ()
 
 let spawn prog args env =
   let in_r, in_w = Unix.pipe ~cloexec:true () in
   let out_r, out_w = Unix.pipe ~cloexec:true () in
   match
-    Unix.create_process_env prog (Array.of_list (prog :: args)) env in_r out_w
-      Unix.stderr
+    Unix.create_process_env prog
+      (Array.of_list (prog :: args))
+      env in_r out_w Unix.stderr
   with
   | pid ->
       Unix.close in_r;
       Unix.close out_w;
       let process =
-        { pid
+        {
+          pid
         ; stdin= Miou_unix.of_file_descr ~non_blocking:true in_w
-        ; stdout= Miou_unix.of_file_descr ~non_blocking:true out_r } in
+        ; stdout= Miou_unix.of_file_descr ~non_blocking:true out_r
+        }
+      in
       Ok (process, owned ~finally:abort process)
   | exception Unix.Unix_error (err, _, _) ->
       List.iter Unix.close [ in_r; in_w; out_r; out_w ];
@@ -91,19 +95,22 @@ let ssh ctx edn ~service ~version =
   let host =
     match edn.Mgit_sync.Endpoint.user with
     | Some user -> user ^ "@" ^ edn.Mgit_sync.Endpoint.host
-    | None -> edn.Mgit_sync.Endpoint.host in
+    | None -> edn.Mgit_sync.Endpoint.host
+  in
   let port =
     match edn.Mgit_sync.Endpoint.port with
     | Some port -> [ "-p"; string_of_int port ]
-    | None -> [] in
+    | None -> []
+  in
   (* NOTE(dinosaure): the version of the protocol is given to the remote as
      [GIT_PROTOCOL], if the SSH server accepts it. *)
   let env, send_env =
-    if version >= 2
-    then
-      ( Array.append (Unix.environment ()) [| Fmt.str "GIT_PROTOCOL=version=%d" version |]
+    if version >= 2 then
+      ( Array.append (Unix.environment ())
+          [| Fmt.str "GIT_PROTOCOL=version=%d" version |]
       , [ "-o"; "SendEnv=GIT_PROTOCOL" ] )
-    else (Unix.environment (), []) in
+    else (Unix.environment (), [])
+  in
   let command = Fmt.str "%s %s" service (quote edn.Mgit_sync.Endpoint.path) in
   spawn ctx.ssh (send_env @ port @ [ host; command ]) env
 
@@ -115,14 +122,17 @@ module Client = struct
   let request ctx ~meth ~headers ?body ~uri fn =
     let body = Option.map Httpcats.stream body in
     let handler _meta _req resp () = function
-      | Some str when Httpcats.Status.is_successful resp.Httpcats.status -> fn str
-      | _ -> () in
+      | Some str when Httpcats.Status.is_successful resp.Httpcats.status ->
+          fn str
+      | _ -> ()
+    in
     let meth = (meth :> H1.Method.t) in
     match
       Httpcats.request ?authenticator:ctx.authenticator ~follow_redirect:true
         ~meth ~headers ?body ~fn:handler ~uri ()
     with
-    | Ok (resp, ()) when Httpcats.Status.is_successful resp.Httpcats.status -> Ok ()
+    | Ok (resp, ()) when Httpcats.Status.is_successful resp.Httpcats.status ->
+        Ok ()
     | Ok (resp, ()) ->
         error_msgf "%s: %a" uri Httpcats.Status.pp_hum resp.Httpcats.status
     | Error err -> error_msgf "%s: %a" uri Httpcats.pp_error err
@@ -133,7 +143,7 @@ module Http = Mgit_http.Make (Client)
 (* Git_flow *)
 
 type flow = Tcp of Miou_unix.file_descr | Ssh of process | Http of Http.t
-type t = { flow : flow; resource : Miou.Ownership.t }
+type t = { flow: flow; resource: Miou.Ownership.t }
 
 let connect ctx edn ~service ~version =
   match edn.Mgit_sync.Endpoint.scheme with
@@ -180,10 +190,10 @@ let close_fd fd = try Miou_unix.close fd with Unix.Unix_error _ -> ()
 let close t =
   begin match t.flow with
   | Tcp fd -> close_fd fd
-  | Ssh { pid; stdin; stdout } ->
+  | Ssh { pid; stdin; stdout } -> (
       close_fd stdin;
       close_fd stdout;
-      (try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
+      try ignore (Unix.waitpid [] pid) with Unix.Unix_error _ -> ())
   | Http http -> Http.close http
   end;
   Miou.Ownership.disown t.resource

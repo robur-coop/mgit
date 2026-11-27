@@ -3,10 +3,7 @@ let src = Logs.Src.create "mgit.store"
 module Log = (val Logs.src_log src : Logs.LOG)
 module SHA1 = Digestif.SHA1
 
-type error =
-  [ `Msg of string
-  | `Out_of_space
-  | `Not_found of Carton.Uid.t ]
+type error = [ `Msg of string | `Out_of_space | `Not_found of Carton.Uid.t ]
 
 let pp_error ppf = function
   | `Msg msg -> Fmt.string ppf msg
@@ -18,18 +15,22 @@ let ref_length = Mgit_object.ref_length
 
 exception Out_of_space = Mgit_blk.Append.Out_of_space
 
-type metadata =
-  { hdr_len : int
-  ; pack_off : int
-  ; pack_len : int
-  ; idx_off : int
-  ; idx_len : int }
+type metadata = {
+    hdr_len: int
+  ; pack_off: int
+  ; pack_len: int
+  ; idx_off: int
+  ; idx_len: int
+}
 
 let rd bstr =
   let get n = Int64.to_int (Bstr.get_int64_le bstr (n * 8)) in
   match (get 0, get 1, get 2, get 3, get 4) with
   | hdr_len, pack_off, pack_len, idx_off, idx_len
-    when hdr_len >= 0 && pack_off >= 0 && pack_len >= 0 && idx_off >= 0
+    when hdr_len >= 0
+         && pack_off >= 0
+         && pack_len >= 0
+         && idx_off >= 0
          && idx_len >= 0 ->
       Ok { hdr_len; pack_off; pack_len; idx_off; idx_len }
   | _ -> Error `Invalid_metadata
@@ -47,16 +48,16 @@ module Make (Block : Mgit_blk.BLOCK) = struct
   module Blk = Mgit_blk.Make (Block)
 
   type fd = metadata Blk.t
+  type reader = { idx: fd Classeur.t option; carton: fd Carton.t option }
 
-  type reader = { idx : fd Classeur.t option; carton : fd Carton.t option }
-
-  type t =
-    { blk : metadata Blk.t
-    ; header : Bundle.t option
-    ; reader : reader
-    ; pool : reader list Atomic.t
-    ; readers : int Atomic.t
-    ; previous : int Atomic.t option }
+  type t = {
+      blk: metadata Blk.t
+    ; header: Bundle.t option
+    ; reader: reader
+    ; pool: reader list Atomic.t
+    ; readers: int Atomic.t
+    ; previous: int Atomic.t option
+  }
 
   let allocate bits = De.make_window ~bits
 
@@ -99,8 +100,14 @@ module Make (Block : Mgit_blk.BLOCK) = struct
     let header = header_of blk in
     let idx = idx_of blk in
     let carton = carton_of blk idx in
-    { blk; header; reader= { idx; carton }; pool= Atomic.make []
-    ; readers= Atomic.make 0; previous }
+    {
+      blk
+    ; header
+    ; reader= { idx; carton }
+    ; pool= Atomic.make []
+    ; readers= Atomic.make 0
+    ; previous
+    }
 
   let copy { idx; carton } =
     let idx = Option.map Classeur.copy idx in
@@ -116,7 +123,8 @@ module Make (Block : Mgit_blk.BLOCK) = struct
 
   let rec give t reader =
     let old = Atomic.get t.pool in
-    if not (Atomic.compare_and_set t.pool old (reader :: old)) then give t reader
+    if not (Atomic.compare_and_set t.pool old (reader :: old)) then
+      give t reader
 
   let with_reader t fn =
     let reader = take t in
@@ -163,7 +171,8 @@ module Make (Block : Mgit_blk.BLOCK) = struct
     | None -> []
     | Some idx ->
         let fn ~(uid : Classeur.uid) ~crc:_ ~offset:_ =
-          Carton.Uid.unsafe_of_string (uid :> string) in
+          Carton.Uid.unsafe_of_string (uid :> string)
+        in
         Classeur.map ~fn idx
 
   let cursor r uid =
@@ -196,7 +205,8 @@ module Make (Block : Mgit_blk.BLOCK) = struct
     let fn value =
       let len = Carton.Value.length value in
       let bstr = Carton.Value.bigstring value in
-      (Carton.Value.kind value, Bstr.sub_string bstr ~off:0 ~len) in
+      (Carton.Value.kind value, Bstr.sub_string bstr ~off:0 ~len)
+    in
     Option.map fn (value t uid)
 
   let publish t ?level ~references ~prerequisites ~load entries =
@@ -208,7 +218,8 @@ module Make (Block : Mgit_blk.BLOCK) = struct
            previous generation: we wait until nobody reads it anymore.
            It's a simple spin-lock. *)
         let rec wait counter =
-          if Atomic.get counter > 0 then (Miou.yield (); wait counter) in
+          if Atomic.get counter > 0 then (Miou.yield (); wait counter)
+        in
         Option.iter wait t.previous;
         let hdr = Bundle.to_string hdr in
         let app = Blk.append t.blk `Inactive in
@@ -216,32 +227,34 @@ module Make (Block : Mgit_blk.BLOCK) = struct
         let written = ref 0 in
         let push str =
           written := !written + String.length str;
-          Blk.Append.append app str in
+          Blk.Append.append app str
+        in
         let pad () =
           Blk.Append.flush app;
           written := 0;
-          Blk.Append.position app - zone_off in
-        begin
-          try
-            push hdr;
-            let hdr_len = !written in
-            let pack_off = pad () in
-            let targets = Delta.delta ~load (List.to_seq entries) in
-            let idx_entries, hash =
-              Pack.emit ?level ~push ~load
-                ~number_of_objects:(List.length entries) targets in
-            let pack_len = !written in
-            let idx_off = pad () in
-            Pack.idx ~push ~pack:hash idx_entries;
-            let idx_len = !written in
-            let _ = pad () in
-            let m = { hdr_len; pack_off; pack_len; idx_off; idx_len } in
-            Log.debug (fun m' ->
-                m' "publish: hdr:%d pack:[%d;%d] idx:[%d;%d]" m.hdr_len
-                  m.pack_off m.pack_len m.idx_off m.idx_len);
-            let blk = Blk.commit (Blk.with_metadata t.blk m) in
-            Ok (reload ~previous:t.readers blk)
-          with Out_of_space -> Error `Out_of_space
+          Blk.Append.position app - zone_off
+        in
+        begin try
+          push hdr;
+          let hdr_len = !written in
+          let pack_off = pad () in
+          let targets = Delta.delta ~load (List.to_seq entries) in
+          let idx_entries, hash =
+            Pack.emit ?level ~push ~load
+              ~number_of_objects:(List.length entries) targets
+          in
+          let pack_len = !written in
+          let idx_off = pad () in
+          Pack.idx ~push ~pack:hash idx_entries;
+          let idx_len = !written in
+          let _ = pad () in
+          let m = { hdr_len; pack_off; pack_len; idx_off; idx_len } in
+          Log.debug (fun m' ->
+              m' "publish: hdr:%d pack:[%d;%d] idx:[%d;%d]" m.hdr_len m.pack_off
+                m.pack_len m.idx_off m.idx_len);
+          let blk = Blk.commit (Blk.with_metadata t.blk m) in
+          Ok (reload ~previous:t.readers blk)
+        with Out_of_space -> Error `Out_of_space
         end
 
   let to_bundle t =
@@ -264,7 +277,8 @@ module Make (Block : Mgit_blk.BLOCK) = struct
       let index (uid : Carton.Uid.t) =
         match extern uid with
         | Some (kind, bstr) -> Carton.Extern (kind, bstr)
-        | None -> raise Not_found in
+        | None -> raise Not_found
+      in
       Carton.of_cache cache ~z ~allocate ~ref_length index
   end
 end

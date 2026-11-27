@@ -18,13 +18,14 @@ end
 module Make (Block : Device.S) = struct
   type blk = Block.t
 
-  type t =
-    { blk : Block.t
-    ; sector : Bstr.t
-    ; limit : int
-    ; mutable cursor : int
-    ; mutable fill : int
-    ; mutable written : int }
+  type t = {
+      blk: Block.t
+    ; sector: Bstr.t
+    ; limit: int
+    ; mutable cursor: int
+    ; mutable fill: int
+    ; mutable written: int
+  }
 
   let position t = t.cursor + t.fill
   let written t = t.written
@@ -47,12 +48,12 @@ module Make (Block : Device.S) = struct
       fill_sectors t ~off:(off + can) ~len:(len - can) str
     end
 
-  let append t ?(off= 0) ?len str =
-    let len = match len with
-      | Some len -> len
-      | None -> String.length str - off in
-    if off < 0 || len < 0 || off > String.length str - len
-    then invalid_arg "Append.append";
+  let append t ?(off = 0) ?len str =
+    let len =
+      match len with Some len -> len | None -> String.length str - off
+    in
+    if off < 0 || len < 0 || off > String.length str - len then
+      invalid_arg "Append.append";
     fill_sectors t ~off ~len str
 
   let flush t =
@@ -62,10 +63,10 @@ module Make (Block : Device.S) = struct
       issue t
     end
 
-  let create blk ?(off= 0) limit =
+  let create blk ?(off = 0) limit =
     let sector_size = Block.sector_size blk in
-    if off land (sector_size - 1) <> 0
-    then invalid_arg "Append.make: off must be sector-aligned";
+    if off land (sector_size - 1) <> 0 then
+      invalid_arg "Append.make: off must be sector-aligned";
     let sector = Bstr.create sector_size in
     { blk; sector; limit; cursor= off; fill= 0; written= 0 }
 

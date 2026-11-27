@@ -1,7 +1,4 @@
-type error =
-  [ `Msg of string
-  | `Out_of_space
-  | `Not_found of Carton.Uid.t ]
+type error = [ `Msg of string | `Out_of_space | `Not_found of Carton.Uid.t ]
 
 val pp_error : error Fmt.t
 
@@ -9,7 +6,9 @@ module Make (Block : Mgit_blk.BLOCK) : sig
   type t
   type fd
 
-  val format : ?ratio:float -> ?length:int -> Block.t -> (unit, [> error ]) result
+  val format :
+    ?ratio:float -> ?length:int -> Block.t -> (unit, [> error ]) result
+
   val load : Block.t -> (t, [> error ]) result
   val protect : t -> (unit -> 'a) -> 'a
   val references : t -> (string * Carton.Uid.t) list

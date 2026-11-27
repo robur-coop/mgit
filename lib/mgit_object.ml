@@ -55,10 +55,12 @@ let digest ~kind payload =
 let identify =
   let init kind (len : Carton.Size.t) =
     let hdr = Fmt.str "%s %d\000" (string_of_kind kind) (len :> int) in
-    SHA1.feed_string SHA1.empty hdr in
+    SHA1.feed_string SHA1.empty hdr
+  in
   let feed bstr ctx = SHA1.feed_bigstring ctx bstr in
   let serialize ctx =
-    Carton.Uid.unsafe_of_string (SHA1.to_raw_string (SHA1.get ctx)) in
+    Carton.Uid.unsafe_of_string (SHA1.to_raw_string (SHA1.get ctx))
+  in
   { Carton.First_pass.init; feed; serialize }
 
 let digest_pack () =
@@ -66,14 +68,19 @@ let digest_pack () =
   let feed_bigstring bstr ctx = SHA1.feed_bigstring ctx bstr in
   let serialize ctx = SHA1.to_raw_string (SHA1.get ctx) in
   let hash =
-    { Carton.First_pass.feed_bytes; feed_bigstring; serialize
-    ; length = SHA1.digest_size } in
+    {
+      Carton.First_pass.feed_bytes
+    ; feed_bigstring
+    ; serialize
+    ; length= SHA1.digest_size
+    }
+  in
   Carton.First_pass.Digest (hash, SHA1.empty)
 
 (* Users *)
 
 module User = struct
-  type t = { name : string; email : string; date : int * int option }
+  type t = { name: string; email: string; date: int * int option }
 
   let string_of_tz = function
     | None -> "+0000"
@@ -82,13 +89,15 @@ module User = struct
         let minutes = abs minutes in
         Fmt.str "%c%02d%02d" sign (minutes / 60) (minutes mod 60)
 
-  let to_string { name; email; date = secs, tz } =
+  let to_string { name; email; date= secs, tz } =
     Fmt.str "%s <%s> %d %s" name email secs (string_of_tz tz)
 
   let tz_of_string str =
     if String.length str <> 5 then None
     else
-      let sign = match str.[0] with '-' -> Some (-1) | '+' -> Some 1 | _ -> None in
+      let sign =
+        match str.[0] with '-' -> Some (-1) | '+' -> Some 1 | _ -> None
+      in
       match
         ( sign
         , int_of_string_opt (String.sub str 1 2)
@@ -104,15 +113,19 @@ module User = struct
         let email = String.sub str (i + 1) (j - i - 1) in
         let rest = String.sub str (j + 1) (String.length str - j - 1) in
         let fn = ( <> ) "" in
-        let rest = List.filter fn (String.split_on_char ' ' (String.trim rest)) in
+        let rest =
+          List.filter fn (String.split_on_char ' ' (String.trim rest))
+        in
         begin match rest with
-        | [] -> Ok { name; email; date = (0, None) }
+        | [] -> Ok { name; email; date= (0, None) }
         | secs :: rest ->
             begin match int_of_string_opt secs with
             | None -> error_msgf "Invalid date in %S" str
             | Some secs ->
-                let tz = match rest with tz :: _ -> tz_of_string tz | [] -> None in
-                Ok { name; email; date = (secs, tz) }
+                let tz =
+                  match rest with tz :: _ -> tz_of_string tz | [] -> None
+                in
+                Ok { name; email; date= (secs, tz) }
             end
         end
     | _ -> error_msgf "Invalid user: %S" str
@@ -123,15 +136,8 @@ end
 (* Trees *)
 
 module Tree = struct
-  type perm =
-    [ `Normal
-    | `Exec
-    | `Everybody
-    | `Link
-    | `Dir
-    | `Commit ]
-
-  type entry = { perm : perm; name : string; node : Carton.Uid.t }
+  type perm = [ `Normal | `Exec | `Everybody | `Link | `Dir | `Commit ]
+  type entry = { perm: perm; name: string; node: Carton.Uid.t }
   type t = entry list (* kept sorted, see [order] *)
 
   let int_of_perm = function
@@ -151,16 +157,13 @@ module Tree = struct
     | 0o160000 -> Ok `Commit
     | perm -> error_msgf "Invalid permission: %o" perm
 
-  let key { perm; name; _ } =
-    match perm with `Dir -> name ^ "/" | _ -> name
-
+  let key { perm; name; _ } = match perm with `Dir -> name ^ "/" | _ -> name
   let order a b = String.compare (key a) (key b)
   let empty = []
   let v entries = List.sort_uniq order entries
   let to_list t = t
   let is_empty t = t = []
   let find t name = List.find_opt (fun entry -> entry.name = name) t
-
   let remove t name = List.filter (fun entry -> entry.name <> name) t
   let add t entry = List.merge order [ entry ] (remove t entry.name)
   let uids t = List.map (fun { node; _ } -> node) t
@@ -172,10 +175,10 @@ module Tree = struct
         match String.index_from_opt str pos '\000' with
         | None -> error_msgf "Malformed tree object"
         | Some nul ->
-            if nul + ref_length >= String.length str
-            then error_msgf "Malformed tree object"
-            else begin
-              match String.index_from_opt str pos ' ' with
+            if nul + ref_length >= String.length str then
+              error_msgf "Malformed tree object"
+            else
+              begin match String.index_from_opt str pos ' ' with
               | Some sp when sp < nul ->
                   let perm = String.sub str pos (sp - pos) in
                   let name = String.sub str (sp + 1) (nul - sp - 1) in
@@ -188,7 +191,8 @@ module Tree = struct
                       go ({ perm; name; node } :: acc) (nul + 1 + ref_length)
                   end
               | _ -> error_msgf "Malformed tree object"
-            end in
+              end
+    in
     go [] 0
 
   let to_string t =
@@ -198,7 +202,8 @@ module Tree = struct
       Buffer.add_char buf ' ';
       Buffer.add_string buf name;
       Buffer.add_char buf '\000';
-      Buffer.add_string buf (node :> string) in
+      Buffer.add_string buf (node :> string)
+    in
     List.iter fn t; Buffer.contents buf
 
   let digest t = digest ~kind:`B (to_string t)
@@ -214,17 +219,20 @@ let headers_of_string str =
       | Some nl when nl = pos ->
           let msg = String.sub str (nl + 1) (String.length str - nl - 1) in
           (String.sub str 0 pos, Some msg)
-      | Some nl -> go (nl + 1) in
-    go 0 in
+      | Some nl -> go (nl + 1)
+    in
+    go 0
+  in
   let lines =
     if hdrs = "" then []
     else
-     let trimmed =
-       if String.length hdrs > 0
-       && hdrs.[String.length hdrs - 1] = '\n'
-       then String.sub hdrs 0 (String.length hdrs - 1)
-       else hdrs in
-     String.split_on_char '\n' trimmed in
+      let trimmed =
+        if String.length hdrs > 0 && hdrs.[String.length hdrs - 1] = '\n' then
+          String.sub hdrs 0 (String.length hdrs - 1)
+        else hdrs
+      in
+      String.split_on_char '\n' trimmed
+  in
   let rec fold acc = function
     | [] -> List.rev acc
     | line :: rest when String.length line > 0 && line.[0] = ' ' ->
@@ -238,9 +246,12 @@ let headers_of_string str =
         | None -> fold ((line, []) :: acc) rest
         | Some sp ->
             let key = String.sub line 0 sp in
-            let value = String.sub line (sp + 1) (String.length line - sp - 1) in
+            let value =
+              String.sub line (sp + 1) (String.length line - sp - 1)
+            in
             fold ((key, [ value ]) :: acc) rest
-        end in
+        end
+  in
   let hdrs = fold [] lines in
   (List.map (fun (key, values) -> (key, List.rev values)) hdrs, message)
 
@@ -264,13 +275,14 @@ let single key hdrs =
 (* Commits *)
 
 module Commit = struct
-  type t =
-    { tree : Carton.Uid.t
-    ; parents : Carton.Uid.t list
-    ; author : User.t
-    ; committer : User.t
-    ; extra : (string * string list) list
-    ; message : string option }
+  type t = {
+      tree: Carton.Uid.t
+    ; parents: Carton.Uid.t list
+    ; author: User.t
+    ; committer: User.t
+    ; extra: (string * string list) list
+    ; message: string option
+  }
 
   let make ~tree ?(parents = []) ~author ~committer ?(extra = []) message =
     { tree; parents; author; committer; extra; message }
@@ -284,24 +296,28 @@ module Commit = struct
     let parents =
       List.filter_map
         (function
-          | "parent", [ hex ] -> Result.to_option (uid_of_hex hex)
-          | _ -> None)
-        hdrs in
+          | "parent", [ hex ] -> Result.to_option (uid_of_hex hex) | _ -> None)
+        hdrs
+    in
     let* author = single "author" hdrs in
     let* author = User.of_string author in
     let* committer = single "committer" hdrs in
     let* committer = User.of_string committer in
     let extra =
-      List.filter (fun (key, _) -> not (List.mem key reserved)) hdrs in
+      List.filter (fun (key, _) -> not (List.mem key reserved)) hdrs
+    in
     Ok { tree; parents; author; committer; extra; message }
 
   let to_string { tree; parents; author; committer; extra; message } =
     let hdrs =
       [ ("tree", [ hex_of_uid tree ]) ]
       @ List.map (fun uid -> ("parent", [ hex_of_uid uid ])) parents
-      @ [ ("author", [ User.to_string author ])
-        ; ("committer", [ User.to_string committer ]) ]
-      @ extra in
+      @ [
+          ("author", [ User.to_string author ])
+        ; ("committer", [ User.to_string committer ])
+        ]
+      @ extra
+    in
     let hdrs = string_of_headers hdrs in
     match message with None -> hdrs | Some message -> hdrs ^ "\n" ^ message
 
@@ -311,12 +327,13 @@ end
 (* Tags *)
 
 module Tag = struct
-  type t =
-    { obj : Carton.Uid.t
-    ; kind : Carton.Kind.t
-    ; tag : string
-    ; tagger : User.t option
-    ; message : string option }
+  type t = {
+      obj: Carton.Uid.t
+    ; kind: Carton.Kind.t
+    ; tag: string
+    ; tagger: User.t option
+    ; message: string option
+  }
 
   let of_string str =
     let hdrs, message = headers_of_string str in
@@ -330,17 +347,21 @@ module Tag = struct
       | Some [ tagger ] ->
           let* tagger = User.of_string tagger in
           Ok (Some tagger)
-      | _ -> Ok None in
+      | _ -> Ok None
+    in
     Ok { obj; kind; tag; tagger; message }
 
   let to_string { obj; kind; tag; tagger; message } =
     let hdrs =
-      [ ("object", [ hex_of_uid obj ])
-      ; ("type", [ string_of_kind kind ])
-      ; ("tag", [ tag ]) ]
-      @ (match tagger with
-        | Some tagger -> [ ("tagger", [ User.to_string tagger ]) ]
-        | None -> []) in
+      [
+        ("object", [ hex_of_uid obj ]); ("type", [ string_of_kind kind ])
+      ; ("tag", [ tag ])
+      ]
+      @
+      match tagger with
+      | Some tagger -> [ ("tagger", [ User.to_string tagger ]) ]
+      | None -> []
+    in
     let hdrs = string_of_headers hdrs in
     match message with None -> hdrs | Some message -> hdrs ^ "\n" ^ message
 
@@ -366,7 +387,9 @@ let parents_of_commit str =
     match String.index_from_opt str pos '\n' with
     | None -> List.rev acc
     | Some eol ->
-        begin match String.split_on_char ' ' (String.sub str pos (eol - pos)) with
+        begin match
+          String.split_on_char ' ' (String.sub str pos (eol - pos))
+        with
         | [ "parent"; hex ] ->
             begin match decode_opt hex with
             | Some uid -> go (Carton.Uid.unsafe_of_string uid :: acc) (eol + 1)
@@ -374,7 +397,8 @@ let parents_of_commit str =
             end
         | [ "tree"; _ ] -> go acc (eol + 1)
         | _ -> List.rev acc
-        end in
+        end
+  in
   go [] 0
 
 (* object <hex>\n *)
@@ -395,9 +419,10 @@ let links ~kind str =
   | `A ->
       let tree = Option.to_list (tree_of_commit str) in
       tree @ parents_of_commit str
-  | `B -> begin match Tree.of_string str with
-          | Ok tree -> Tree.uids tree
-          | Error _ -> []
-          end
+  | `B ->
+      begin match Tree.of_string str with
+      | Ok tree -> Tree.uids tree
+      | Error _ -> []
+      end
   | `C -> []
   | `D -> Option.to_list (target_of_tag str)

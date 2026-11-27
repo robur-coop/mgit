@@ -6,10 +6,12 @@ open Cmdliner
 open Mgit_cli
 
 let depth =
-  let parser str = match int_of_string_opt str with
+  let parser str =
+    match int_of_string_opt str with
     | Some n when n >= 0 -> Ok n
     | Some _ -> error_msgf "The depth must be greater or equal to than 0"
-    | None -> error_msgf "Invalid depth number" in
+    | None -> error_msgf "Invalid depth number"
+  in
   Arg.conv (parser, Fmt.int)
 
 let shallows =
@@ -20,12 +22,17 @@ let shallows =
 
 let term =
   let open Term in
-  const run $ setup_logs $ setup_git $ shallows
+  const run
+  $ setup_logs
+  $ setup_git
+  $ shallows
   |> map (Result.map_error (msgf "%a" Mgit.pp_error))
   |> term_result ~usage:false
 
 let cmd =
-  let doc = "Clean-up and shallow commits from a block-device (according to a depth)." in
+  let doc =
+    "Clean-up and shallow commits from a block-device (according to a depth)."
+  in
   let man = [] in
   let info = Cmd.info ~doc ~man "gc" in
   Cmd.v info term

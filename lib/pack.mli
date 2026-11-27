@@ -14,5 +14,6 @@ val emit :
   -> 'meta Cartonnage.Target.t Seq.t
   -> Classeur.Encoder.entry array * string
 
-val idx : push:(string -> unit) -> pack:string -> Classeur.Encoder.entry array -> unit
+val idx :
+  push:(string -> unit) -> pack:string -> Classeur.Encoder.entry array -> unit
 (* [idx ~push ~pack entries], [pack] is the signature of the PACK file. *)

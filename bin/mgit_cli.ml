@@ -1,11 +1,9 @@
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 let msgf fmt = Fmt.kstr (fun msg -> `Msg msg) fmt
 let ( let* ) = Result.bind
-
 let src = Logs.Src.create "mgit.cli"
 
 module Log = (val Logs.src_log src : Logs.LOG)
-
 open Cmdliner
 
 let output_options = "OUTPUT OPTIONS"
@@ -25,9 +23,7 @@ let utf_8 =
 
 let reporter ppf =
   let report src level ~over k msgf =
-    let k _ =
-      over () ;
-      k () in
+    let k _ = over (); k () in
     let with_metadata header _tags k ppf fmt =
       Fmt.kpf k ppf
         ("[%a]%a[%a]: " ^^ fmt ^^ "\n%!")
@@ -35,14 +31,16 @@ let reporter ppf =
         (Stdlib.Domain.self () :> int)
         Logs_fmt.pp_header (level, header)
         Fmt.(styled `Magenta string)
-        (Logs.Src.name src) in
-    msgf @@ fun ?header ?tags fmt -> with_metadata header tags k ppf fmt in
+        (Logs.Src.name src)
+    in
+    msgf @@ fun ?header ?tags fmt -> with_metadata header tags k ppf fmt
+  in
   { Logs.report }
 
 let setup_logs utf_8 style_renderer level =
-  Fmt_tty.setup_std_outputs ~utf_8 ?style_renderer () ;
-  Logs.set_level level ;
-  Logs.set_reporter (reporter Fmt.stderr) ;
+  Fmt_tty.setup_std_outputs ~utf_8 ?style_renderer ();
+  Logs.set_level level;
+  Logs.set_reporter (reporter Fmt.stderr);
   Option.is_none level
 
 let setup_logs = Term.(const setup_logs $ utf_8 $ renderer $ verbosity)
@@ -94,14 +92,17 @@ let non_existing_file =
     match Fpath.of_string str with
     | Ok v when Sys.file_exists str = false -> Ok v
     | Ok v -> error_msgf "Invalid path (it already exists): %a" Fpath.pp v
-    | Error _ as err -> err in
+    | Error _ as err -> err
+  in
   Arg.conv (parser, Fpath.pp)
 
 let existing_file =
-  let parser str = match Fpath.of_string str with
+  let parser str =
+    match Fpath.of_string str with
     | Ok v when Sys.file_exists str && Sys.is_regular_file str -> Ok v
     | Ok v -> error_msgf "%a is not a file and/or does not exists" Fpath.pp v
-    | Error _ as err -> err in
+    | Error _ as err -> err
+  in
   Arg.conv (parser, Fpath.pp)
 
 let docs_hexdump = "HEX OUTPUT"
@@ -174,7 +175,7 @@ let ssh =
 
 let setup_context () =
   let ssh = Sys.getenv_opt "MGIT_SSH" in
-  Flow.ctx ?ssh:ssh ()
+  Flow.ctx ?ssh ()
 
 let setup_context =
   let open Term in
@@ -184,41 +185,58 @@ let date =
   let doc = "The $(b,epoch) time used for commits." in
   Cmd.Env.info "MGIT_DATE" ~doc
 
-let now = match Sys.getenv_opt "MGIT_DATE" with
-  | Some ts -> begin match int_of_string_opt ts with
-    | Some ts when ts >= 0 -> Fun.const ts
-    | Some _ | None ->
-      Logs.warn (fun m -> m "The given MGIT_DATE is wrong (it must a non-negative number)");
-      fun () -> int_of_float (Unix.time ()) end
+let now =
+  match Sys.getenv_opt "MGIT_DATE" with
+  | Some ts ->
+      begin match int_of_string_opt ts with
+      | Some ts when ts >= 0 -> Fun.const ts
+      | Some _ | None ->
+          Logs.warn (fun m ->
+              m "The given MGIT_DATE is wrong (it must a non-negative number)");
+          fun () -> int_of_float (Unix.time ())
+      end
   | None -> fun () -> int_of_float (Unix.time ())
 
 let setup_git ctx depth remote branch filename =
-  let* branch = match remote, branch with
-    | Some { Mgit_sync.Endpoint.branch= Some branch; _ }, None -> Ok (Some branch)
+  let* branch =
+    match (remote, branch) with
+    | Some { Mgit_sync.Endpoint.branch= Some branch; _ }, None ->
+        Ok (Some branch)
     | (Some { Mgit_sync.Endpoint.branch= None; _ } | None), branch -> Ok branch
     | Some { Mgit_sync.Endpoint.branch= Some a; _ }, Some b ->
-      error_msgf "Impossible to choose a branch between the given endpoint (%s) and the given branch (%s)" a b in
+        error_msgf
+          "Impossible to choose a branch between the given endpoint (%s) and \
+           the given branch (%s)"
+          a b
+  in
   Log.debug (fun m -> m "branch: %a" Fmt.(Dump.option string) branch);
-  let remote = match remote with
+  let remote =
+    match remote with
     | Some remote ->
-      Git.remote ctx (Mgit_sync.Endpoint.to_string remote)
-      |> Result.get_ok |> Option.some
-    | None -> None in
+        Git.remote ctx (Mgit_sync.Endpoint.to_string remote)
+        |> Result.get_ok
+        |> Option.some
+    | None -> None
+  in
   let* blk = Block.load (Fpath.to_string filename) in
   Git.make ?branch ?depth ~now ?remote (Git.Blk blk)
 
 let non_negative_int =
-  let parser str = match int_of_string_opt str with
+  let parser str =
+    match int_of_string_opt str with
     | Some n when n >= 0 -> Ok n
     | Some _ -> error_msgf "A depth must be greater or equal to than 0"
-    | None -> error_msgf "Invalid depth: %S" str in
+    | None -> error_msgf "Invalid depth: %S" str
+  in
   Arg.conv (parser, Fmt.int)
 
 let depth =
   let doc = "The depth of the Git history." in
   let env = Cmd.Env.info "MGIT_DEPTH" in
   let open Arg in
-  value & opt (some non_negative_int) (Some 1) & info [ "depth" ] ~doc ~env ~docv:"DEPTH"
+  value
+  & opt (some non_negative_int) (Some 1)
+  & info [ "depth" ] ~doc ~env ~docv:"DEPTH"
 
 let endpoint =
   let parser = Mgit_sync.Endpoint.of_string in
@@ -229,13 +247,17 @@ let remote =
   let doc = "The remote Git repository." in
   let env = Cmd.Env.info "MGIT_REMOTE" in
   let open Arg in
-  value & opt (some endpoint) None & info [ "r"; "remote" ] ~doc ~env ~docv:"REMOTE"
+  value
+  & opt (some endpoint) None
+  & info [ "r"; "remote" ] ~doc ~env ~docv:"REMOTE"
 
 let branch =
   let doc = "The branch of the Git repository." in
   let env = Cmd.Env.info "MGIT_BRANCH" in
   let open Arg in
-  value & opt (some string) None & info [ "b"; "branch" ] ~doc ~env ~docv:"BRANCH"
+  value
+  & opt (some string) None
+  & info [ "b"; "branch" ] ~doc ~env ~docv:"BRANCH"
 
 let filename =
   let doc = "The block-device as a file to load." in
@@ -243,10 +265,14 @@ let filename =
   required & pos 0 (some existing_file) None & info [] ~doc ~docv:"FILENAME"
 
 let absolute_path =
-  let parser str = match Fpath.of_string str with
+  let parser str =
+    match Fpath.of_string str with
     | Ok v when Fpath.is_abs v -> Ok str
-    | Ok _ -> error_msgf "The given path must be absolute and represent a file (an edge)"
-    | Error _ as err -> err in
+    | Ok _ ->
+        error_msgf
+          "The given path must be absolute and represent a file (an edge)"
+    | Error _ as err -> err
+  in
   Arg.conv (parser, Fmt.string)
 
 let path =
@@ -255,20 +281,31 @@ let path =
   required & pos 1 (some absolute_path) None & info [] ~doc ~docv:"PATH"
 
 let absolute_path_for_entry =
-  let parser str = match Fpath.of_string str with
+  let parser str =
+    match Fpath.of_string str with
     | Ok v when Fpath.is_abs v && Fpath.is_file_path v -> Ok str
-    | Ok _ -> error_msgf "The given path must be absolute and represent a file (an edge)"
-    | Error _ as err -> err in
+    | Ok _ ->
+        error_msgf
+          "The given path must be absolute and represent a file (an edge)"
+    | Error _ as err -> err
+  in
   Arg.conv (parser, Fmt.string)
 
 let entry =
   let doc = "The path of the entry into a Git repository." in
   let open Arg in
-  required & pos 1 (some absolute_path_for_entry) None & info [] ~doc ~docv:"PATH"
+  required
+  & pos 1 (some absolute_path_for_entry) None
+  & info [] ~doc ~docv:"PATH"
 
 let setup_git =
   let open Term in
-  const setup_git $ setup_context $ depth $ remote $ branch $ filename
+  const setup_git
+  $ setup_context
+  $ depth
+  $ remote
+  $ branch
+  $ filename
   |> map (Result.map_error (msgf "%a" Mgit.pp_error))
   |> term_result ~usage:false
 

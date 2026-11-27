@@ -1,7 +1,6 @@
 type error = [ `Msg of string ]
 
 val pp_error : error Fmt.t
-
 val ref_length : int (* [20], helper for [carton]. *)
 val uid_of_hex : string -> (Carton.Uid.t, [> error ]) result
 val uid_of_hex_exn : string -> Carton.Uid.t
@@ -16,10 +15,7 @@ val kind_of_string : string -> (Carton.Kind.t, [> error ]) result
 (** Users *)
 
 module User : sig
-  type t =
-    { name : string
-    ; email : string
-    ; date : int * int option }
+  type t = { name: string; email: string; date: int * int option }
 
   val to_string : t -> string
   val of_string : string -> (t, [> error ]) result
@@ -29,15 +25,8 @@ end
 (** Trees *)
 
 module Tree : sig
-  type perm =
-    [ `Normal
-    | `Exec
-    | `Everybody
-    | `Link
-    | `Dir
-    | `Commit ]
-
-  type entry = { perm : perm; name : string; node : Carton.Uid.t }
+  type perm = [ `Normal | `Exec | `Everybody | `Link | `Dir | `Commit ]
+  type entry = { perm: perm; name: string; node: Carton.Uid.t }
   type t
 
   val empty : t
@@ -56,13 +45,14 @@ end
 (** Commits *)
 
 module Commit : sig
-  type t =
-    { tree : Carton.Uid.t
-    ; parents : Carton.Uid.t list
-    ; author : User.t
-    ; committer : User.t
-    ; extra : (string * string list) list
-    ; message : string option }
+  type t = {
+      tree: Carton.Uid.t
+    ; parents: Carton.Uid.t list
+    ; author: User.t
+    ; committer: User.t
+    ; extra: (string * string list) list
+    ; message: string option
+  }
 
   val make :
        tree:Carton.Uid.t
@@ -81,12 +71,13 @@ end
 (** Tags *)
 
 module Tag : sig
-  type t =
-    { obj : Carton.Uid.t
-    ; kind : Carton.Kind.t
-    ; tag : string
-    ; tagger : User.t option
-    ; message : string option }
+  type t = {
+      obj: Carton.Uid.t
+    ; kind: Carton.Kind.t
+    ; tag: string
+    ; tagger: User.t option
+    ; message: string option
+  }
 
   val of_string : string -> (t, [> error ]) result
   val to_string : t -> string
