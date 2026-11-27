@@ -2,6 +2,7 @@ let failwithf fmt = Fmt.failwith fmt
 let exitf fmt = Fmt.kstr (fun msg -> Fmt.epr "%s.\n%!" msg; exit 1) fmt
 let or_exit ~pp = function Ok v -> v | Error err -> exitf "%a" pp err
 let or_failure ~pp = function Ok v -> v | Error err -> failwithf "%a" pp err
+let tmpf ?(ext= ".img") fmt = Fmt.kstr (fun str -> Filename.temp_file str ext) fmt
 
 let pp_error ppf = function
   | #Mgit.error as err -> Mgit.pp_error ppf err
@@ -18,7 +19,6 @@ let contents idx =
 
 let check t =
   let fn (files, counter) ~path _perm str =
-    Unix.sleepf 0.02;
     match path with
     | [ "zcounter" ] -> (files + 1, int_of_string str)
     | [ filename ] ->
@@ -29,7 +29,7 @@ let check t =
     | _ -> failwithf "Unexpected %s" (String.concat "/" path) in
   Git.fold t fn (0, -1)
 
-let readers_and_writer (type k) ?(commits= 30) ?(readers= 3) (t : k Git.t) () =
+let readers_and_writer (type k) ?(commits= 30) ?(readers= 3) (t : k Git.t) =
   let ( let* ) = Result.bind in
   let stop = Atomic.make false and started = Atomic.make 0 in
   let reader () =
@@ -45,6 +45,9 @@ let readers_and_writer (type k) ?(commits= 30) ?(readers= 3) (t : k Git.t) () =
         go (succ seen) in
     go 0 in
   let prm0 = Miou.async @@ fun () ->
+    let finally stop = Atomic.set stop true in
+    let resource = Miou.Ownership.create ~finally stop in
+    Miou.Ownership.own resource;
     while Atomic.get started < readers do Miou.yield () done;
     (* readers are ready to read! *)
     for idx = 1 to commits do
@@ -53,7 +56,7 @@ let readers_and_writer (type k) ?(commits= 30) ?(readers= 3) (t : k Git.t) () =
         Git.set t (Fmt.str "/file_%d" idx) (contents idx) in
       or_failure ~pp:pp_error (Result.join result)
     done;
-    Atomic.set stop true in
+    Miou.Ownership.release resource in
   let seen =
     Miou.parallel reader (List.init readers (Fun.const ()))
     |> List.map @@ or_failure ~pp:Fmt.exn in
@@ -65,14 +68,28 @@ let readers_and_writer (type k) ?(commits= 30) ?(readers= 3) (t : k Git.t) () =
 let test00 =
   let descr = {text|parallel readers and writer on mem|text} in
   Test.test ~title:"test00" ~descr @@ fun () ->
-  Miou_unix.run @@ fun () ->
+  let domains = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1) in
+  Miou_unix.run ~domains @@ fun () ->
   let t = or_exit ~pp:pp_error (Git.make ~depth:1 Git.Mem) in
-  readers_and_writer t ()
+  readers_and_writer t
+
+let test01 =
+  let descr = {text|parallel readers and writer on block device|text} in
+  Test.test ~title:"test01" ~descr @@ fun () ->
+  let domains = Int.min 4 (Stdlib.Domain.recommended_domain_count () - 1) in
+  Miou_unix.run ~domains @@ fun () ->
+  let filename = tmpf "mgit" in
+  let sector_size = 0x200
+  and length = 0x2_000_000 in
+  let blk = or_exit ~pp:pp_error (Block.create ~sector_size filename length) in
+  or_exit ~pp:pp_error (Git.format blk);
+  let t = or_exit ~pp:pp_error (Git.make ~depth:1 (Git.Blk blk)) in
+  readers_and_writer t
 
 let ( / ) = Filename.concat
 
 let () =
-  let tests = [ test00 ] in
+  let tests = [ test00; test01 ] in
   let ({ Test.directory } as runner) = Test.runner (Sys.getcwd () / "_tests") in
   let run idx test =
     Format.printf "test%03d: %!" (succ idx);
