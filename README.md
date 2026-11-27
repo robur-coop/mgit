@@ -60,6 +60,17 @@ $ mgit get disk.img /foo.txt
 Hello World!
 ```
 
+### `mgit` and domains
+
+The model currently used for reading from and writing to a Git repository
+(whether in memory or on a block device) is one of multiple readers and
+sequential writers: in other words, there can only be one active write
+operation at any one time.
+
+If you are interested in the possibility of having multiple writers at the same
+time, we recommend [bancos][bancos], which has a more granular structure
+allowing multiple writers to access the block device.
+
 ## [`ocaml-git`][ocaml-git] and [`git-kv`][git-kv]
 
 `mgit` is a new iteration of `ocaml-git` and `git-kv`, for which I am currently
@@ -106,3 +117,4 @@ specified depth (of the history).
 [digestif]: https://github.com/mirage/digestif
 [lwt]: https://github.com/ocsigen/lwt
 [miou]: https://github.com/robur-coop/miou
+[bancos]: https://github.com/robur-coop/bancos
